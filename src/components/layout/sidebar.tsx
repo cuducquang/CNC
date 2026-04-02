@@ -62,7 +62,7 @@ export function Sidebar() {
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium">Agent Model</div>
             <div className="text-[10px] text-sidebar-foreground/60 truncate">
-              {process.env.NEXT_PUBLIC_AGENT_MODEL || "qwen3:32b"}
+              {process.env.NEXT_PUBLIC_AGENT_MODEL || "qwen3-vl:235b"}
             </div>
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
