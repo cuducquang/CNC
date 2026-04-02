@@ -1,0 +1,44 @@
+FROM node:20-slim AS deps
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+FROM node:20-slim AS builder
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_AGENT_MODEL
+
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_AGENT_MODEL=$NEXT_PUBLIC_AGENT_MODEL \
+    NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+FROM node:20-slim AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# PDF rasterization fallback used by src/lib/pdf-to-image.ts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+# Ensure standalone runtime has full pdfjs worker/assets for server-side rendering fallback
+COPY --from=builder /app/node_modules/pdfjs-dist ./node_modules/pdfjs-dist
+
+EXPOSE 3000
+CMD ["node", "/app/server.js"]

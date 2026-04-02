@@ -1,0 +1,55 @@
+services:
+  python-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: cncapp-python
+    ports:
+      - "8001:8001"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8001
+      FREECAD_PATH: /usr/lib/freecad/lib
+      PYTHONPATH: /app/python
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  cncapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # NEXT_PUBLIC_* must be baked in at build time.
+        # docker compose reads these from .env.local automatically
+        # when you run: docker compose --env-file .env.local up --build
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_AGENT_MODEL: ${NEXT_PUBLIC_AGENT_MODEL}
+    ports:
+      - "3000:3000"
+    depends_on:
+      python-service:
+        condition: service_healthy
+    # Ensures host.docker.internal resolves to the Windows/Mac host
+    # (automatic on Docker Desktop, explicit here for Linux Docker Engine compatibility)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env.local        # server-side vars injected at runtime (API keys, model URLs, etc.)
+    environment:
+      # Internal service wiring — not in .env.local
+      PYTHON_SERVICE_URL: http://python-service:8001
+      # Local Ollama (qwen3-vl:8b) running on the host machine.
+      # Overrides LOCAL_OLLAMA_URL from .env.local — docker-compose environment wins.
+      LOCAL_OLLAMA_URL: http://host.docker.internal:11434
+      # Force Node.js to prefer IPv4 when resolving host.docker.internal.
+      # Without this, Node.js picks the IPv6 address which Ollama does not listen on.
+      NODE_OPTIONS: --dns-result-order=ipv4first
+      # Vision-call runtime controls
+      VISION_TIMEOUT_MS: "120000"
+      PDF_MAX_PAGES_FOR_VISION: "2"
+      VISION_PAGE_CONCURRENCY: "2"
