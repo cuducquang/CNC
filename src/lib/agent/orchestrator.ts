@@ -470,6 +470,29 @@ export async function* runAgent(params: AgentRunParams): AsyncGenerator<AgentEve
           toolArgs = { raw: toolCall.function.arguments };
         }
 
+        // Override large JSON pipeline arguments with the actual accumulated results.
+        // Models like Gemini attempt to copy prior tool outputs into the next tool's
+        // arguments, which produces malformed JSON at ~10KB+ due to escaping errors
+        // or token-limit truncation. The orchestrator already holds the real data.
+        if (toolName === "recognize_features") {
+          if (toolResultsAccum.analyze_drawing)
+            toolArgs.extraction_json = JSON.stringify(toolResultsAccum.analyze_drawing);
+          if (toolResultsAccum.analyze_step_file)
+            toolArgs.step_analysis_json = JSON.stringify(toolResultsAccum.analyze_step_file);
+        }
+        if (toolName === "map_cnc_processes" && toolResultsAccum.recognize_features) {
+          toolArgs.recognition_json = JSON.stringify(toolResultsAccum.recognize_features);
+        }
+        if (toolName === "estimate_cycle_time") {
+          if (toolResultsAccum.map_cnc_processes)
+            toolArgs.process_map_json = JSON.stringify(toolResultsAccum.map_cnc_processes);
+          else if (toolResultsAccum.analyze_drawing)
+            toolArgs.extraction_json = JSON.stringify(toolResultsAccum.analyze_drawing);
+        }
+        if (toolName === "estimate_cost" && toolResultsAccum.estimate_cycle_time) {
+          toolArgs.cycle_time_json = JSON.stringify(toolResultsAccum.estimate_cycle_time);
+        }
+
         yield { type: "tool_call", data: { tool: toolName, args: toolArgs, iteration } };
 
         const startTime = Date.now();
