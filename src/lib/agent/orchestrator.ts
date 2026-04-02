@@ -97,7 +97,7 @@ async function callOllamaWithTools(
   });
 
   const payload = {
-    model:    config.agentModelName,
+    model:    config.agentModelName.replace(/-cloud$/, ""),
     messages: sanitisedMessages,
     tools,
     think:    true,
