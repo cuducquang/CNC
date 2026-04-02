@@ -32,9 +32,9 @@ export async function collectOllamaVisionChat(
   userPrompt: string,
   overrides?: { url?: string; model?: string; apiKey?: string },
 ): Promise<{ content: string; thinking: string }> {
-  const visionUrl   = overrides?.url    || process.env.VL_MODEL_API_URL  || "http://localhost:11434";
-  const visionKey   = overrides?.apiKey ?? process.env.VL_MODEL_API_KEY  ?? "";
-  const visionModel = (overrides?.model  || process.env.VL_MODEL_NAME     || "qwen3-vl:235b-cloud").replace(/-cloud$/, "");
+  const visionUrl   = (overrides?.url    || process.env.VL_MODEL_API_URL  || "http://localhost:11434").trim();
+  const visionKey   = (overrides?.apiKey ?? process.env.VL_MODEL_API_KEY  ?? "").trim();
+  const visionModel = (overrides?.model  || process.env.VL_MODEL_NAME     || "qwen3-vl:235b-cloud").trim().replace(/-cloud$/, "");
   const t0 = Date.now();
 
   console.log(
