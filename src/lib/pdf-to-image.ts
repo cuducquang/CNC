@@ -3,6 +3,7 @@
  *
  * 1) pdftoppm (poppler) when available — fast, used in Docker/Linux.
  * 2) pdfjs-dist + @napi-rs/canvas — all pages on Windows or when poppler is missing.
+ * 3) Python microservice /convert-pdf — fallback for Vercel (no poppler, no native canvas).
  *
  * Non-PDF buffers are returned as a single "page" (raw base64).
  */
@@ -116,6 +117,32 @@ function applySkipFirstPage(pages: string[]): string[] {
   return pages;
 }
 
+/** Convert PDF via the Python microservice (Railway), which has pdftoppm. */
+async function pdfViaPythonService(pdfBuffer: Buffer): Promise<string[]> {
+  const serviceUrl = (process.env.PYTHON_SERVICE_URL || "").trim();
+  if (!serviceUrl) throw new Error("PYTHON_SERVICE_URL not configured");
+
+  const form = new FormData();
+  form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), "drawing.pdf");
+
+  const response = await fetch(`${serviceUrl}/convert-pdf`, {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(120_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Python service /convert-pdf returned ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  const json = await response.json() as { pages: string[]; count: number };
+  if (!Array.isArray(json.pages) || json.pages.length === 0) {
+    throw new Error("Python service returned no pages");
+  }
+  return json.pages;
+}
+
 /**
  * Returns one base64 image per PDF page (or a single entry for raster uploads).
  */
@@ -139,11 +166,19 @@ export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string
     console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdfjs`);
     return applySkipFirstPage(pages);
   } catch (err2) {
-    console.warn(
-      "[pdf-to-image] pdfjs render failed, sending raw PDF bytes as single input:",
-      (err2 as Error).message,
+    console.warn("[pdf-to-image] pdfjs render failed, trying Python service:", (err2 as Error).message);
+  }
+
+  try {
+    const pages = await pdfViaPythonService(buffer);
+    console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via Python service`);
+    return applySkipFirstPage(pages);
+  } catch (err3) {
+    console.warn("[pdf-to-image] Python service failed:", (err3 as Error).message);
+    throw new Error(
+      "Could not convert PDF to images. All methods failed (pdftoppm, pdfjs, Python service). " +
+      "Try uploading a PNG or JPG instead of a PDF."
     );
-    return [buffer.toString("base64")];
   }
 }
 

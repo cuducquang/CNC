@@ -7,6 +7,7 @@ cost estimation) run in the Next.js layer.
 
 Endpoints:
   POST /analyze/step  STEP feature recognition via FreeCAD (geometry only)
+  POST /convert-pdf   PDF → PNG base64 pages via pdftoppm (for Vercel fallback)
   GET  /health        Health check (includes FreeCAD availability)
 
 Run:
@@ -17,12 +18,16 @@ Or with Docker:
 """
 from __future__ import annotations
 
+import base64
+import glob
 import logging
 import os
+import subprocess
 import tempfile
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from freecad_analyzer import STEPAnalyzer, load_freecad
 import freecad_analyzer.step_analyzer as freecad_step
@@ -72,6 +77,50 @@ async def health():
         "status":            "ok",
         "freecad_available": _freecad_available(),
     }
+
+
+# ---------------------------------------------------------------------------
+# PDF → PNG conversion (used by Vercel which has no pdftoppm)
+# ---------------------------------------------------------------------------
+
+@app.post("/convert-pdf")
+async def convert_pdf(
+    file: UploadFile = File(..., description="PDF file to convert to PNG images"),
+):
+    """
+    Convert a PDF to a list of base64-encoded PNG images using pdftoppm.
+    Returns: {"pages": ["<base64png>", ...], "count": N}
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = os.path.join(tmpdir, "input.pdf")
+        out_prefix = os.path.join(tmpdir, "page")
+
+        with open(pdf_path, "wb") as f:
+            f.write(await file.read())
+
+        try:
+            subprocess.run(
+                ["pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "32", pdf_path, out_prefix],
+                check=True,
+                timeout=120,
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=500, detail="pdftoppm not found on this server")
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"pdftoppm failed: {e.stderr.decode()[:200]}")
+
+        png_files = sorted(glob.glob(os.path.join(tmpdir, "page*.png")))
+        if not png_files:
+            raise HTTPException(status_code=422, detail="pdftoppm produced no output — is this a valid PDF?")
+
+        pages = []
+        for png_path in png_files:
+            with open(png_path, "rb") as f:
+                pages.append(base64.b64encode(f.read()).decode("utf-8"))
+
+        logger.info("convert-pdf: %d page(s) converted from %s", len(pages), file.filename)
+        return JSONResponse({"pages": pages, "count": len(pages)})
 
 
 # ---------------------------------------------------------------------------
