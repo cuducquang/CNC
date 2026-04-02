@@ -145,6 +145,10 @@ async function pdfViaPythonService(pdfBuffer: Buffer): Promise<string[]> {
 
 /**
  * Returns one base64 image per PDF page (or a single entry for raster uploads).
+ *
+ * On Vercel Lambda: pdftoppm is absent and @napi-rs/canvas renders blank pages
+ * silently (no error). Skip local methods entirely and delegate to the Python
+ * service which has poppler-utils via Docker.
  */
 export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string[]> {
   if (!isPdfBuffer(buffer)) {
@@ -152,32 +156,39 @@ export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string
   }
 
   const maxPages = maxPdfPages();
+  const onVercel = process.env.VERCEL === "1";
 
-  try {
-    const pages = pdfViaPoppler(buffer, maxPages);
-    console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdftoppm`);
-    return applySkipFirstPage(pages);
-  } catch (err) {
-    console.warn("[pdf-to-image] pdftoppm failed, trying pdfjs:", (err as Error).message);
+  if (!onVercel) {
+    // Local / Docker: try fast native methods first
+    try {
+      const pages = pdfViaPoppler(buffer, maxPages);
+      console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdftoppm`);
+      return applySkipFirstPage(pages);
+    } catch (err) {
+      console.warn("[pdf-to-image] pdftoppm failed, trying pdfjs:", (err as Error).message);
+    }
+
+    try {
+      const pages = await pdfViaPdfJs(buffer, maxPages);
+      if (pages.length > 0) {
+        console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdfjs`);
+        return applySkipFirstPage(pages);
+      }
+    } catch (err2) {
+      console.warn("[pdf-to-image] pdfjs render failed, trying Python service:", (err2 as Error).message);
+    }
   }
 
-  try {
-    const pages = await pdfViaPdfJs(buffer, maxPages);
-    console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdfjs`);
-    return applySkipFirstPage(pages);
-  } catch (err2) {
-    console.warn("[pdf-to-image] pdfjs render failed, trying Python service:", (err2 as Error).message);
-  }
-
+  // Vercel (or local last resort): delegate to Python service (has pdftoppm via Docker)
   try {
     const pages = await pdfViaPythonService(buffer);
     console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via Python service`);
     return applySkipFirstPage(pages);
   } catch (err3) {
-    console.warn("[pdf-to-image] Python service failed:", (err3 as Error).message);
+    const msg = (err3 as Error).message;
+    console.warn("[pdf-to-image] Python service failed:", msg);
     throw new Error(
-      "Could not convert PDF to images. All methods failed (pdftoppm, pdfjs, Python service). " +
-      "Try uploading a PNG or JPG instead of a PDF."
+      `PDF conversion failed: ${msg}. Try uploading a PNG or JPG instead of a PDF.`
     );
   }
 }
