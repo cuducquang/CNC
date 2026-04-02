@@ -123,7 +123,8 @@ async function pdfViaPythonService(pdfBuffer: Buffer): Promise<string[]> {
   if (!serviceUrl) throw new Error("PYTHON_SERVICE_URL not configured");
 
   const form = new FormData();
-  form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), "drawing.pdf");
+  const ab = pdfBuffer.buffer.slice(pdfBuffer.byteOffset, pdfBuffer.byteOffset + pdfBuffer.byteLength) as ArrayBuffer;
+  form.append("file", new Blob([ab], { type: "application/pdf" }), "drawing.pdf");
 
   const response = await fetch(`${serviceUrl}/convert-pdf`, {
     method: "POST",
