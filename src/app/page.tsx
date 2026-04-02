@@ -403,8 +403,21 @@ export default function HomePage() {
               />
             </div>
 
-            {/* Model selector hidden — single cloud model for demo */}
-            <input type="hidden" value={selectedModel} />
+            {/* Model selector */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Agent Model</label>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {AGENT_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} — {m.description}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {error && (
               <div className="rounded-lg bg-destructive/10 text-destructive text-sm px-4 py-3">

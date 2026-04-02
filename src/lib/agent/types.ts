@@ -164,9 +164,19 @@ export interface AgentConfig {
   agentModelUrl: string;
   agentModelName: string;
   agentApiKey: string;
+  /** Wire format for the agent/orchestrator model API calls */
+  agentApiFormat: "ollama" | "openai";
+  /** Whether this model supports Ollama's think: true flag */
+  supportsThinking: boolean;
   visionModelUrl: string;
   visionModelName: string;
   visionApiKey: string;
+  /** Wire format to use when calling the vision model */
+  visionApiFormat: "ollama" | "openai";
+  /** Path override for OpenAI-format agent calls (default: /v1/chat/completions) */
+  agentChatPath?: string;
+  /** Path override for OpenAI-format vision calls (default: /v1/chat/completions) */
+  visionChatPath?: string;
   maxIterations: number;
   temperature: number;
 }
@@ -190,6 +200,10 @@ export interface ToolContext {
   visionModelName?: string;
   /** Vision model API key — overrides VL_MODEL_API_KEY env var when set */
   visionApiKey?: string;
+  /** API format for vision model calls */
+  visionApiFormat?: "ollama" | "openai";
+  /** Chat completions path override for vision API (default: /v1/chat/completions) */
+  visionChatPath?: string;
 }
 
 // ---------------------------------------------------------------------------

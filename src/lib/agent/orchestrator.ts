@@ -20,6 +20,23 @@ import { estimateCycleTime } from "../tools/estimate-cycle-time";
 import { estimateCost      } from "../tools/estimate-cost";
 
 // ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when the selected model cannot be reached or rejects the request
+ * at the HTTP level (4xx/5xx other than recoverable 400/422 tool-format errors).
+ * route.ts catches this and surfaces the error to the user instead of
+ * falling back to the default vision model.
+ */
+export class ModelUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelUnavailableError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Ollama chat API — with full error recovery
 // ---------------------------------------------------------------------------
 
@@ -71,39 +88,66 @@ async function callOllamaWithTools(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (config.agentApiKey) headers["Authorization"] = `Bearer ${config.agentApiKey}`;
 
-  // Sanitise messages: Ollama expects `content` to be a string, and
-  // tool_calls.arguments to be an object (not a string).
-  // Also truncate very large tool results to prevent payload issues.
+  const modelName = config.agentModelName.replace(/-cloud$/, "");
+  const isOpenAI  = config.agentApiFormat === "openai";
+
+  // Sanitise messages for the target API format.
+  // Ollama: tool_calls.arguments must be an object; no tool_call_id on tool messages.
+  // OpenAI: tool_calls.arguments must be a JSON string; tool_call_id required on tool messages.
   const sanitisedMessages = messages.map((m) => {
     const msg: Record<string, unknown> = {
       role:    m.role,
       content: typeof m.content === "string" ? m.content.slice(0, 50_000) : (m.content ?? ""),
     };
+    if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
     if (m.tool_calls) {
-      msg.tool_calls = m.tool_calls.map((tc) => ({
-        function: {
-          name:      tc.function.name,
-          arguments: (() => {
-            try {
-              const a = tc.function.arguments;
-              return typeof a === "string" ? JSON.parse(a) : a;
-            } catch { return {}; }
-          })(),
-        },
-      }));
+      if (isOpenAI) {
+        msg.tool_calls = m.tool_calls.map((tc) => ({
+          id:       tc.id || `call_${Date.now()}`,
+          type:     "function",
+          function: {
+            name:      tc.function.name,
+            arguments: typeof tc.function.arguments === "string"
+              ? tc.function.arguments
+              : JSON.stringify(tc.function.arguments ?? {}),
+          },
+        }));
+      } else {
+        msg.tool_calls = m.tool_calls.map((tc) => ({
+          function: {
+            name:      tc.function.name,
+            arguments: (() => {
+              try {
+                const a = tc.function.arguments;
+                return typeof a === "string" ? JSON.parse(a) : a;
+              } catch { return {}; }
+            })(),
+          },
+        }));
+      }
     }
-    if (m.images) msg.images = m.images;
+    if (!isOpenAI && m.images) msg.images = m.images;
     return msg;
   });
 
-  const payload = {
-    model:    config.agentModelName.replace(/-cloud$/, ""),
-    messages: sanitisedMessages,
-    tools,
-    think:    true,
-    stream:   true,
-    options:  { temperature: config.temperature },
-  };
+  const payload = isOpenAI
+    ? {
+        model:       modelName,
+        messages:    sanitisedMessages,
+        tools:       tools.map((t) => ({ type: "function", function: t.function })),
+        stream:      true,
+        temperature: config.temperature,
+      }
+    : {
+        model:    modelName,
+        messages: sanitisedMessages,
+        tools,
+        ...(config.supportsThinking ? { think: true } : {}),
+        stream:   true,
+        options:  { temperature: config.temperature },
+      };
+
+  const apiPath = isOpenAI ? (config.agentChatPath ?? "/v1/chat/completions") : "/api/chat";
 
   const candidateBaseUrls = buildCandidateBaseUrls(config.agentModelUrl);
   let response: Response | undefined;
@@ -113,7 +157,7 @@ async function callOllamaWithTools(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      response = await fetch(`${baseUrl}/api/chat`, {
+      response = await fetch(`${baseUrl}${apiPath}`, {
         method:  "POST",
         headers,
         body:    JSON.stringify(payload),
@@ -125,7 +169,7 @@ async function callOllamaWithTools(
       break;
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        throw new Error("Agent model request timed out (120 s). The model may be overloaded.");
+        throw new ModelUnavailableError("Agent model request timed out (120 s). The model may be overloaded or unreachable.");
       }
       lastNetworkError = new Error(formatFetchError(err));
     } finally {
@@ -137,7 +181,7 @@ async function callOllamaWithTools(
     const fallbackInfo = candidateBaseUrls.length > 1
       ? ` (also tried ${candidateBaseUrls.slice(1).join(", ")})`
       : "";
-    throw new Error(
+    throw new ModelUnavailableError(
       `Cannot reach agent model at ${config.agentModelUrl}${fallbackInfo}: ${lastNetworkError?.message || "fetch failed"}`,
     );
   }
@@ -156,7 +200,7 @@ async function callOllamaWithTools(
         done: true,
       };
     }
-    throw new Error(`Agent model returned ${status}: ${errBody.slice(0, 300)}`);
+    throw new ModelUnavailableError(`Agent model returned HTTP ${status}: ${errBody.slice(0, 300)}`);
   }
 
   if (!response.body) throw new Error("No response body from agent model");
@@ -167,7 +211,7 @@ async function callOllamaWithTools(
   let buffer       = "";
   let fullThinking = "";
   let fullContent  = "";
-  let toolCalls: ToolCall[] = [];
+  let toolCalls: (ToolCall | undefined)[] = [];
   let streamInterrupted = false;
 
   try {
@@ -181,32 +225,54 @@ async function callOllamaWithTools(
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        const jsonStr = line.startsWith("data: ") ? line.slice(6) : line;
+        if (jsonStr === "[DONE]") break;
         try {
-          const chunk = JSON.parse(line);
-          const msg   = chunk.message || {};
+          const chunk = JSON.parse(jsonStr);
 
-          if (msg.thinking) fullThinking += msg.thinking;
-          if (msg.content)  fullContent  += msg.content;
+          if (isOpenAI) {
+            // OpenAI streaming format
+            const delta = chunk.choices?.[0]?.delta || {};
+            if (delta.thinking) fullThinking += delta.thinking;
+            if (delta.content)  fullContent  += delta.content;
 
-          if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-            const parsedCalls: ToolCall[] = [];
-            for (let i = 0; i < msg.tool_calls.length; i++) {
-              const tc = msg.tool_calls[i];
-              try {
-                const rawArgs = tc.function?.arguments;
-                const argsStr = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
-                if (typeof rawArgs === "string") JSON.parse(rawArgs); // validate
-                parsedCalls.push({
-                  id:       `call_${Date.now()}_${i}`,
-                  function: { name: tc.function.name, arguments: argsStr },
-                });
-              } catch {
-                console.warn(`[Agent] Skipping malformed tool call: ${tc.function?.name}`);
+            if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (!toolCalls[idx]) {
+                  toolCalls[idx] = { id: tc.id || `call_${Date.now()}_${idx}`, function: { name: "", arguments: "" } };
+                }
+                if (tc.function?.name)      toolCalls[idx].function.name      += tc.function.name;
+                if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
               }
             }
-            if (parsedCalls.length > 0) toolCalls = parsedCalls;
+            if (chunk.choices?.[0]?.finish_reason === "stop") break;
+          } else {
+            // Ollama streaming format
+            const msg = chunk.message || {};
+            if (msg.thinking) fullThinking += msg.thinking;
+            if (msg.content)  fullContent  += msg.content;
+
+            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+              const parsedCalls: ToolCall[] = [];
+              for (let i = 0; i < msg.tool_calls.length; i++) {
+                const tc = msg.tool_calls[i];
+                try {
+                  const rawArgs = tc.function?.arguments;
+                  const argsStr = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
+                  if (typeof rawArgs === "string") JSON.parse(rawArgs); // validate
+                  parsedCalls.push({
+                    id:       `call_${Date.now()}_${i}`,
+                    function: { name: tc.function.name, arguments: argsStr },
+                  });
+                } catch {
+                  console.warn(`[Agent] Skipping malformed tool call: ${tc.function?.name}`);
+                }
+              }
+              if (parsedCalls.length > 0) toolCalls = parsedCalls;
+            }
+            if (chunk.done) break;
           }
-          if (chunk.done) break;
         } catch { /* skip malformed JSON chunks */ }
       }
     }
@@ -222,11 +288,12 @@ async function callOllamaWithTools(
     fullContent = fullContent.split("</think>").slice(1).join("</think>").trim() || fullContent;
   }
 
+  const validToolCalls = toolCalls.filter((tc): tc is ToolCall => !!tc);
   return {
     thinking: fullThinking,
     content: fullContent,
-    toolCalls,
-    done: toolCalls.length === 0,
+    toolCalls: validToolCalls,
+    done: validToolCalls.length === 0,
     streamInterrupted,
   };
 }
@@ -372,6 +439,9 @@ export async function* runAgent(params: AgentRunParams): AsyncGenerator<AgentEve
       response = await callOllamaWithTools(messages, TOOL_DEFINITIONS, config);
       consecutiveModelErrors = 0;
     } catch (modelErr) {
+      // ModelUnavailableError means the endpoint is broken — don't retry, propagate immediately.
+      if (modelErr instanceof ModelUnavailableError) throw modelErr;
+
       consecutiveModelErrors++;
       const errMsg = modelErr instanceof Error ? modelErr.message : String(modelErr);
       console.error(`[Agent] Model call failed (attempt ${consecutiveModelErrors}):`, errMsg);
@@ -413,6 +483,8 @@ export async function* runAgent(params: AgentRunParams): AsyncGenerator<AgentEve
             visionModelUrl:   config.visionModelUrl,
             visionModelName:  config.visionModelName,
             visionApiKey:     config.visionApiKey,
+            visionApiFormat:  config.visionApiFormat,
+            visionChatPath:   config.visionChatPath,
           });
         } catch (toolErr) {
           result = { error: toolErr instanceof Error ? toolErr.message : "Tool execution failed" };

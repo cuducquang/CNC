@@ -45,3 +45,5 @@ next-env.d.ts
 
 # ngrok config (contains authtoken — keep local only)
 ngrok.yml
+
+.vercel

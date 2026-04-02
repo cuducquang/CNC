@@ -30,32 +30,53 @@ export async function collectOllamaVisionChat(
   imageBase64: string,
   systemPrompt: string,
   userPrompt: string,
-  overrides?: { url?: string; model?: string; apiKey?: string },
+  overrides?: { url?: string; model?: string; apiKey?: string; apiFormat?: "ollama" | "openai"; apiPath?: string },
 ): Promise<{ content: string; thinking: string }> {
-  const visionUrl   = (overrides?.url    || process.env.VL_MODEL_API_URL  || "http://localhost:11434").trim();
-  const visionKey   = (overrides?.apiKey ?? process.env.VL_MODEL_API_KEY  ?? "").trim();
-  const visionModel = (overrides?.model  || process.env.VL_MODEL_NAME     || "qwen3-vl:235b-cloud").trim().replace(/-cloud$/, "");
+  const visionUrl    = (overrides?.url    || process.env.VL_MODEL_API_URL  || "http://localhost:11434").trim();
+  const visionKey    = (overrides?.apiKey ?? process.env.VL_MODEL_API_KEY  ?? "").trim();
+  const visionModel  = (overrides?.model  || process.env.VL_MODEL_NAME     || "qwen3-vl:235b-cloud").trim().replace(/-cloud$/, "");
+  const apiFormat    = overrides?.apiFormat ?? "ollama";
   const t0 = Date.now();
 
   console.log(
-    `[vision-ollama] start model=${visionModel} url=${visionUrl} image_b64_len=${imageBase64.length} timeout_ms=${VISION_TIMEOUT_MS}`,
+    `[vision-ollama] start model=${visionModel} url=${visionUrl} format=${apiFormat} image_b64_len=${imageBase64.length} timeout_ms=${VISION_TIMEOUT_MS}`,
   );
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (visionKey) headers["Authorization"] = `Bearer ${visionKey}`;
 
-  const payload = {
-    model: visionModel,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt, images: [imageBase64] },
-    ],
-    // Vision extraction does not need chain-of-thought tokens; disabling
-    // this avoids long "reasoning" delays before JSON content appears.
-    think: false,
-    stream: true,
-    options: { temperature: 0.1 },
-  };
+  // Build payload — Ollama vs OpenAI wire format differ for images
+  const payload = apiFormat === "openai"
+    ? {
+        model: visionModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+              { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+            ],
+          },
+        ],
+        stream: true,
+        temperature: 0.1,
+      }
+    : {
+        model: visionModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt, images: [imageBase64] },
+        ],
+        // Vision extraction does not need chain-of-thought tokens.
+        think: false,
+        stream: true,
+        options: { temperature: 0.1 },
+      };
+
+  const apiPath = apiFormat === "openai"
+    ? (overrides?.apiPath ?? "/v1/chat/completions")
+    : "/api/chat";
 
   const candidateBaseUrls = buildCandidateBaseUrls(visionUrl);
   let response: Response | undefined;
@@ -66,7 +87,7 @@ export async function collectOllamaVisionChat(
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), VISION_TIMEOUT_MS);
     try {
-      response = await fetch(`${baseUrl}/api/chat`, {
+      response = await fetch(`${baseUrl}${apiPath}`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
@@ -131,15 +152,25 @@ export async function collectOllamaVisionChat(
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        // OpenAI SSE lines are prefixed with "data: "
+        const jsonStr = line.startsWith("data: ") ? line.slice(6) : line;
+        if (jsonStr === "[DONE]") break;
         try {
-          const chunk = JSON.parse(line);
-          const msg = chunk.message || {};
-          const thinkToken: string = msg.thinking || "";
-          if (thinkToken) fullThinking += thinkToken;
-          if (msg.content) fullContent += msg.content;
-          if (chunk.done) break;
+          const chunk = JSON.parse(jsonStr);
+          if (apiFormat === "openai") {
+            // OpenAI streaming: choices[0].delta.content
+            const delta = chunk.choices?.[0]?.delta || {};
+            if (delta.content) fullContent += delta.content;
+          } else {
+            // Ollama streaming: message.content / message.thinking
+            const msg = chunk.message || {};
+            const thinkToken: string = msg.thinking || "";
+            if (thinkToken) fullThinking += thinkToken;
+            if (msg.content) fullContent += msg.content;
+            if (chunk.done) break;
+          }
         } catch {
-          /* skip */
+          /* skip malformed lines */
         }
       }
 

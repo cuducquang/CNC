@@ -51,7 +51,7 @@ export const schema: ToolDefinition = {
 
 export async function analyzeDrawing(
   args: Record<string, any>,
-  context: Pick<ToolContext, "imageBase64" | "imageBase64Pages" | "visionModelUrl" | "visionModelName" | "visionApiKey">,
+  context: Pick<ToolContext, "imageBase64" | "imageBase64Pages" | "visionModelUrl" | "visionModelName" | "visionApiKey" | "visionApiFormat" | "visionChatPath">,
 ): Promise<Record<string, unknown>> {
   const pageConcurrency = (() => {
     const raw = parseInt(process.env.VISION_PAGE_CONCURRENCY || "2", 10);
@@ -91,9 +91,11 @@ export async function analyzeDrawing(
         SYSTEM_PROMPT,
         EXTRACTION_PROMPT,
         {
-          url:    context.visionModelUrl,
-          model:  context.visionModelName,
-          apiKey: context.visionApiKey,
+          url:       context.visionModelUrl,
+          model:     context.visionModelName,
+          apiKey:    context.visionApiKey,
+          apiFormat: context.visionApiFormat,
+          apiPath:   context.visionChatPath,
         },
       );
       console.log(

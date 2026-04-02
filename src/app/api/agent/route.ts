@@ -18,7 +18,7 @@ export const maxDuration = 300;
 
 import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { runAgent } from "@/lib/agent/orchestrator";
+import { runAgent, ModelUnavailableError } from "@/lib/agent/orchestrator";
 import { runFallbackPipeline } from "@/lib/agent/fallback-pipeline";
 import { drawingBufferToBase64Pages } from "@/lib/pdf-to-image";
 import { getModelById } from "@/lib/models";
@@ -237,11 +237,28 @@ export async function POST(request: NextRequest) {
           }
         } catch (agentErr) {
           const reason = agentErr instanceof Error ? agentErr.message : "Agent error";
+
+          // Model is unreachable / returned a hard HTTP error.
+          if (agentErr instanceof ModelUnavailableError) {
+            console.error("[Agent] Model unavailable, not falling back:", reason);
+            await fail(`The selected model is unavailable: ${reason}. Please select a different agent model and try again.`);
+            return;
+          }
+
+          // User explicitly chose a model — don't silently fall back to the
+          // default vision model. Show the error so they can pick another model.
+          if (agentModel) {
+            const label = agentModel.split("/").pop()?.replace(/-cloud$/, "") ?? agentModel;
+            console.error(`[Agent] Chosen model "${label}" failed, not falling back:`, reason);
+            await fail(`Model "${label}" did not complete the analysis: ${reason}. Please try a different agent model.`);
+            return;
+          }
+
           console.error("[Agent] Agent loop failed, switching to fallback:", reason);
 
           send("status", {
             step: 0, title: "Direct Pipeline",
-            message: "Agent model unavailable — running direct analysis pipeline...",
+            message: "Agent did not complete — running direct analysis pipeline...",
           });
 
           try {

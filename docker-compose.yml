@@ -43,12 +43,6 @@ services:
     environment:
       # Internal service wiring — not in .env.local
       PYTHON_SERVICE_URL: http://python-service:8001
-      # Local Ollama (qwen3-vl:8b) running on the host machine.
-      # Overrides LOCAL_OLLAMA_URL from .env.local — docker-compose environment wins.
-      LOCAL_OLLAMA_URL: http://host.docker.internal:11434
-      # Force Node.js to prefer IPv4 when resolving host.docker.internal.
-      # Without this, Node.js picks the IPv6 address which Ollama does not listen on.
-      NODE_OPTIONS: --dns-result-order=ipv4first
       # Vision-call runtime controls
       VISION_TIMEOUT_MS: "120000"
       PDF_MAX_PAGES_FOR_VISION: "2"
