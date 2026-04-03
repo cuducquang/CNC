@@ -128,9 +128,9 @@ export async function collectOllamaVisionChat(
       // A4500 20 GB VRAM: 8B model ~7.5 GB weights + ~4 GB KV cache at 32768 = ~11.5 GB — fits.
       num_ctx: 32768,
       // Hard cap on new tokens to prevent infinite thinking loops (qwen3-vl thinking mode can
-      // loop forever with sliding-window context). 16000 tokens ≈ 4 min on A4500 — well above
-      // page 1's actual 4200-token usage, giving the 8B model ample room on complex drawings.
-      num_predict: 16000,
+      // loop forever with sliding-window context). 8000 tokens ≈ 2 min on A4500 — enough for
+      // full extraction + JSON on a complex drawing page, with room for deep analysis.
+      num_predict: 8000,
     },
   };
 
@@ -261,10 +261,11 @@ export async function collectOllamaVisionChat(
       }
 
       // qwen3-vl thinking mode can loop indefinitely (Ollama uses sliding-window context).
-      // If thinking exceeds ~100k chars the model is stuck in a verification loop.
+      // If thinking exceeds ~50k chars the model is stuck in a verification loop.
       // Break now so extractJsonFromThinking can recover the answer from the first pass.
-      if (thinkContent.length > 100_000) {
-        console.warn(`[vision-ollama] Thinking exceeded 100k chars (${thinkContent.length}) — breaking out of thinking loop`);
+      // 50k fires at ~270s on A4500, safely before Vercel's 300s function timeout.
+      if (thinkContent.length > 50_000) {
+        console.warn(`[vision-ollama] Thinking exceeded 50k chars (${thinkContent.length}) — breaking out of thinking loop`);
         break;
       }
     }

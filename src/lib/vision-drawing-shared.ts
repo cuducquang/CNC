@@ -70,6 +70,8 @@ Rules:
 - For bilateral tolerance ±X: tolerance_plus = X, tolerance_minus = X.
 - If no tolerance callout exists for a dimension, omit tolerance_plus and tolerance_minus.
 - If no GD&T frame control symbols are visible, return empty gdt array.
+- RADIUS vs THREAD: "R" prefix always means RADIUS (e.g., R2.340, R4.50, 4X R4.50, 3X R2.340 are all radius dimensions). Never classify an R-prefixed value as a thread. Threads always include a pitch and standard callout: M8x1.25, 1/4-20 UNC, 3/8 NPT, TAP, THRU, etc.
+- Once you have listed all visible dimensions and features, write the JSON immediately. Do not re-verify or re-check items already listed.
 - Return JSON only. No explanations.`;
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
