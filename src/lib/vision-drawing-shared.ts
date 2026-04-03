@@ -71,6 +71,8 @@ Rules:
 - RADIUS vs THREAD: "R" prefix always means RADIUS (e.g., R2.340, R4.50, 4X R4.50, 3X R2.340 are all radius dimensions). Never classify an R-prefixed value as a thread. Threads always include a pitch and standard callout: M8x1.25, 1/4-20 UNC, 3/8 NPT, TAP, THRU, etc.
 - REFERENCE DIMENSIONS: Values in parentheses () are reference (non-toleranced) dimensions. "2X 18.215 (17.362)" means 2 features, nominal 18.215, reference 17.362 — it is a hole/feature dimension, NOT a thread.
 - BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). The "DIMENSIONS" column in a BOM table contains part numbers, not engineering measurements. Skip BOM table entries entirely.
+- DEDUPLICATION: If the same nominal value appears multiple times (e.g., R3.264 appears in 8 places), create ONE entry with quantity=8. Do NOT list it multiple times. Each unique nominal value gets exactly one JSON entry.
+- ONE PASS ONLY: Scan the drawing once. Record each unique dimension once (with quantity). Do not re-examine, re-list, or re-verify values. Write the JSON immediately after your single pass.
 - The "notes" field must always be [] (empty array) for a drawing page. Do NOT put engineering text notes in this field.
 - Return JSON only. No explanations.`;
 
