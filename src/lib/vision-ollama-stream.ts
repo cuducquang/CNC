@@ -58,7 +58,13 @@ function findMatchingBrace(s: string): number {
  * Falls back to scanning all '{' positions from the end.
  */
 function extractJsonFromThinking(thinking: string): string {
-  // Scan backwards for "dimensions" — the model's JSON answer always contains this key.
+  // Collect ALL valid JSON objects with a "dimensions" key, pick the one with
+  // the most features (dimensions + threads + gdt count). This prevents the model's
+  // self-doubt from overwriting a real extraction: if the model first writes a good JSON
+  // then second-guesses to {"dimensions": [], "notes": ["non_technical_page"]}, we keep
+  // the good one (higher score) rather than the last one (backwards-scan artifact).
+  const candidates: { json: string; score: number }[] = [];
+
   let searchFrom = thinking.length;
   while (searchFrom > 0) {
     const dimsIdx = thinking.lastIndexOf('"dimensions"', searchFrom - 1);
@@ -73,12 +79,20 @@ function extractJsonFromThinking(thinking: string): string {
 
     const jsonStr = fromBrace.slice(0, closeIdx + 1);
     try {
-      JSON.parse(jsonStr);
-      console.log(`[vision-ollama] extracted JSON from thinking (${jsonStr.length} chars)`);
-      return jsonStr;
-    } catch {
-      searchFrom = dimsIdx;
-    }
+      const parsed = JSON.parse(jsonStr);
+      const dims    = Array.isArray(parsed.dimensions) ? parsed.dimensions.length : 0;
+      const threads = Array.isArray(parsed.threads)    ? parsed.threads.length    : 0;
+      const gdt     = Array.isArray(parsed.gdt)        ? parsed.gdt.length        : 0;
+      candidates.push({ json: jsonStr, score: dims + threads + gdt });
+    } catch { /* skip malformed */ }
+    searchFrom = dimsIdx; // continue scanning backwards
+  }
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    console.log(`[vision-ollama] extracted JSON from thinking (${best.json.length} chars, score=${best.score}, ${candidates.length} candidate(s))`);
+    return best.json;
   }
 
   // Last-resort: scan all '{' positions from the end, return the last parseable JSON.

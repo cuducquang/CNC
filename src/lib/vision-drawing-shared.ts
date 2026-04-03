@@ -19,13 +19,15 @@ Output JSON only.`;
 export const EXTRACTION_PROMPT = `/no_think
 TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page. Write the complete JSON answer NOW — before any verification or analysis. Output JSON first, then check if needed.
 
-If this page is clearly a non-technical page (pure cover sheet with no dimension lines, pure logo, or blank page):
+If this page is ONLY a company logo, blank page, or pure title/cover with zero drawing geometry (no dimension lines, no feature callouts, no measurement values anywhere on the page):
 {"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}
 
 If the image is completely unrelated to engineering (photo, artwork):
 {"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["not_a_drawing"]}
 
-If it IS an engineering drawing, extract the clearly visible data:
+IMPORTANT: Pages that MIX content types are still drawing pages — extract from them. Examples: an isometric/3D view page that also has dimension callouts; a page with both a BOM table AND section views with measurements. If ANY dimension values, tolerances, or feature callouts are visible anywhere on the page, extract them.
+
+If it IS an engineering drawing (or mixed page with drawing content), extract the clearly visible data:
 
 {
   "dimensions": [
