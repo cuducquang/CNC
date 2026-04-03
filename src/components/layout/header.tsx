@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Cpu, Upload, History, Menu } from "lucide-react";
 import { useState } from "react";
+import { UserMenu } from "@/components/auth/user-menu";
 
 const navItems = [
   { href: "/", label: "New Analysis", icon: Upload },
@@ -44,10 +45,12 @@ export function Header() {
         <div className="flex-1" />
 
         {/* Status indicator */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground mr-3">
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
           Agent Online
         </div>
+
+        <UserMenu />
       </div>
 
       {/* Mobile nav */}

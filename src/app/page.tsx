@@ -228,6 +228,12 @@ export default function HomePage() {
                 break;
 
               case "tool_result":
+                // Freeze VLM thinking panel once the drawing analysis finishes
+                if (parsed.tool === "analyze_drawing" && localThinking) {
+                  addMsg("thinking", { content: localThinking, iteration: 1 });
+                  setLiveThinking("");
+                  localThinking = "";
+                }
                 setActiveTool(null);
                 setCompletedTools((prev) => new Set(prev).add(parsed.tool));
                 setMessages((prev) => {

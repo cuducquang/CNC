@@ -41,7 +41,7 @@ export function AgentStream({ messages, liveThinking, isStreaming }: AgentStream
           <AgentMessage key={msg.id} msg={msg} />
         ))}
 
-        {liveThinking && <ThinkingPanel content={liveThinking} isLive />}
+        {liveThinking && <ThinkingPanel content={liveThinking} isLive label="Vision Analysis — Reading Drawing" />}
 
         {isStreaming && !liveThinking && messages.length > 0 && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">

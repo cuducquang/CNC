@@ -1,10 +1,18 @@
 /**
  * Tool: analyze_drawing
  *
- * Uses the Vision-Language Model (Qwen3-VL) to extract manufacturing features,
+ * Uses the Vision-Language Model to extract manufacturing features,
  * dimensions, GD&T callouts, and material from a 2D engineering drawing.
  *
- * Supports multi-page PDFs: each rasterized page is analyzed and results merged.
+ * Multi-page strategy:
+ *   - ALL pages are tried one at a time (sequential — avoids VRAM overload on small models).
+ *   - Each page result is classified:
+ *       "ok"          → has features — included in merged result
+ *       "soft_skip"   → cover sheet / title block / blank — skipped, but others still tried
+ *       "hard_reject" → clearly not a drawing (photo, logo) — skipped
+ *       "unparseable" → model timed out or returned garbage — skipped
+ *   - Results from ALL "ok" pages are merged (features + GD&T + material).
+ *   - This handles any PDF structure: cover on page 1, dims on page 2, tolerances on page 3, etc.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -22,7 +30,7 @@ import {
 import { collectOllamaVisionChat } from "../vision-ollama-stream";
 
 // ---------------------------------------------------------------------------
-// Schema — what the LLM sees when deciding to call this tool
+// Schema
 // ---------------------------------------------------------------------------
 
 export const schema: ToolDefinition = {
@@ -46,19 +54,15 @@ export const schema: ToolDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// Handler — runs when the LLM calls analyze_drawing
+// Handler
 // ---------------------------------------------------------------------------
 
 export async function analyzeDrawing(
   args: Record<string, any>,
-  context: Pick<ToolContext, "imageBase64" | "imageBase64Pages" | "visionModelUrl" | "visionModelName" | "visionApiKey" | "visionApiFormat" | "visionChatPath">,
+  context: Pick<ToolContext, "imageBase64" | "imageBase64Pages" | "visionModelUrl" | "visionModelName"> & {
+    onThinking?: (chunk: string) => void;
+  },
 ): Promise<Record<string, unknown>> {
-  const pageConcurrency = (() => {
-    const raw = parseInt(process.env.VISION_PAGE_CONCURRENCY || "2", 10);
-    if (!Number.isFinite(raw) || raw <= 0) return 2;
-    return Math.min(raw, 4);
-  })();
-
   const pages =
     context.imageBase64Pages && context.imageBase64Pages.length > 0
       ? context.imageBase64Pages
@@ -75,93 +79,94 @@ export async function analyzeDrawing(
     };
   }
 
-  console.log(
-    `[Tool:analyze_drawing] Calling vision model for ${pages.length} page(s), concurrency=${pageConcurrency}...`,
-  );
+  console.log(`[Tool:analyze_drawing] Processing all ${pages.length} page(s) sequentially...`);
 
-  const parsedPerPage: Record<string, unknown>[] = new Array(pages.length);
-  const outcomes: PageOutcome[] = new Array(pages.length);
+  const parsedPerPage: Record<string, unknown>[] = [];
+  const outcomes: PageOutcome[] = [];
 
-  const runOnePage = async (i: number): Promise<void> => {
+  // Process every page one at a time — never concurrent on small models.
+  for (let i = 0; i < pages.length; i++) {
     const pageStart = Date.now();
-    console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} vision request start`);
+    console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} — sending to vision model...`);
+
+    let parsed: Record<string, unknown>;
+    let outcome: PageOutcome;
+
     try {
       const { content } = await collectOllamaVisionChat(
         pages[i],
         SYSTEM_PROMPT,
         EXTRACTION_PROMPT,
         {
-          url:       context.visionModelUrl,
-          model:     context.visionModelName,
-          apiKey:    context.visionApiKey,
-          apiFormat: context.visionApiFormat,
-          apiPath:   context.visionChatPath,
+          url:        context.visionModelUrl,
+          model:      context.visionModelName,
+          onThinking: context.onThinking,
         },
       );
-      console.log(
-        `[Tool:analyze_drawing] Page ${i + 1}/${pages.length} vision response received in ${Date.now() - pageStart}ms`,
-      );
+      const elapsed = Date.now() - pageStart;
+      console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} responded in ${elapsed}ms`);
+
       if (!content.trim()) {
-        parsedPerPage[i] = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
-        outcomes[i] = "unparseable";
-        return;
+        console.warn(`[Tool:analyze_drawing] Page ${i + 1} returned empty response — skipping.`);
+        parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
+        outcome = "unparseable";
+      } else {
+        parsed  = parseModelJson(content);
+        outcome = classifyPageParsed(parsed);
+        const featureCount = ((parsed.dimensions as any[]) || []).length + ((parsed.threads as any[]) || []).length;
+        console.log(`[Tool:analyze_drawing] Page ${i + 1} classified as "${outcome}" — ${featureCount} feature(s).`);
       }
-      const parsed = parseModelJson(content);
-      parsedPerPage[i] = parsed;
-      outcomes[i] = classifyPageParsed(parsed);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} failed:`, msg);
-      parsedPerPage[i] = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
-      outcomes[i] = "unparseable";
+      console.warn(`[Tool:analyze_drawing] Page ${i + 1} error: ${msg} — skipping.`);
+      parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
+      outcome = "unparseable";
     }
-  };
 
-  for (let start = 0; start < pages.length; start += pageConcurrency) {
-    const end = Math.min(start + pageConcurrency, pages.length);
-    const batch: Promise<void>[] = [];
-    for (let i = start; i < end; i++) {
-      batch.push(runOnePage(i));
-    }
-    await Promise.all(batch);
+    parsedPerPage.push(parsed);
+    outcomes.push(outcome);
   }
 
-  const merged = mergeVisionParsedResults(
-    parsedPerPage.map((p) => p ?? { features: [], gdt: [], material: null, notes: [], raw_model_output: "(missing page result)" }),
+  // Merge results from all pages that returned features.
+  const okParsed = parsedPerPage.filter((_, i) => outcomes[i] === "ok");
+  const merged   = mergeVisionParsedResults(
+    okParsed.length > 0 ? okParsed : parsedPerPage,
   );
-  const features = (merged.features as any[]) || [];
-  const gdt      = (merged.gdt     as any[]) || [];
-  const notes    = (merged.notes   as string[]) || [];
 
+  const features = (merged.dimensions as any[]) || [];
+  const gdt      = (merged.gdt     as any[]) || [];
   const { anyOk, allHardReject, allBad } = summarizeOutcomes(outcomes);
 
   if (features.length > 0) {
-    console.log(`[Tool:analyze_drawing] Extracted ${features.length} features, ${gdt.length} GD&T (merged)`);
+    const okPages = outcomes.filter(o => o === "ok").length;
+    console.log(
+      `[Tool:analyze_drawing] Done — ${features.length} features, ${gdt.length} GD&T from ${okPages}/${pages.length} drawing page(s).`,
+    );
     return { ...merged, feature_count: features.length, gdt_count: gdt.length, pages_analyzed: pages.length };
   }
 
-  if (allHardReject || allBad) {
+  if (allHardReject) {
     return {
       ...merged,
-      error: "This file does not appear to be an engineering drawing. Please upload a 2D technical drawing with dimensions and manufacturing features.",
+      error: "This file does not appear to contain engineering drawings. Please upload a 2D technical drawing with dimensions and manufacturing features.",
       feature_count: 0, gdt_count: 0, pages_analyzed: pages.length,
     };
   }
 
-  if (anyOk) {
+  if (allBad) {
     return {
       ...merged,
-      error: "No manufacturing features detected after analyzing all pages. Please ensure dimensions and CNC features are visible.",
+      error: "The vision model could not parse any page. Try exporting the drawing as a PNG or JPG for better results.",
       feature_count: 0, gdt_count: 0, pages_analyzed: pages.length,
     };
   }
 
-  const hasUnparseable = outcomes.some((o) => o === "unparseable");
+  const skippedCount = outcomes.filter(o => o === "soft_skip").length;
   return {
     ...merged,
-    error: hasUnparseable
-      ? "The vision model could not parse one or more pages. Try a clearer PDF or install Poppler / use a PNG export of the drawing."
-      : "No manufacturing features detected in this file. Cover-only first pages are skipped when possible; ensure at least one sheet shows the part with dimensions.",
-    notes, feature_count: 0, gdt_count: 0, pages_analyzed: pages.length,
+    error: anyOk
+      ? "No manufacturing features detected despite finding drawing pages. Ensure dimensions and CNC features are visible."
+      : `No drawing content found — all ${pages.length} page(s) appear to be cover sheets or non-technical pages (${skippedCount} skipped). Please upload the page with the actual part geometry.`,
+    feature_count: 0, gdt_count: 0, pages_analyzed: pages.length,
   };
 }

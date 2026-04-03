@@ -18,10 +18,9 @@ export const maxDuration = 300;
 
 import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { runAgent, ModelUnavailableError } from "@/lib/agent/orchestrator";
 import { runFallbackPipeline } from "@/lib/agent/fallback-pipeline";
 import { drawingBufferToBase64Pages } from "@/lib/pdf-to-image";
-import { getModelById } from "@/lib/models";
+import { getAgentConfig } from "@/lib/agent/config";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -198,9 +197,36 @@ export async function POST(request: NextRequest) {
         // ── Run the agent ──────────────────────────────────────────────────
         let succeeded = false;
 
-        // Resolve the base URL for the selected model (empty string = use env var)
-        const modelDef = agentModel ? getModelById(agentModel) : undefined;
-        const agentModelUrl = modelDef?.baseUrl || undefined;
+        // agentModelUrl not needed — fallback pipeline resolves URL via LOCAL_OLLAMA_URL env var
+        const agentModelUrl = undefined;
+
+        // ── Log model selection + verify Ollama is reachable ───────────────
+        const resolvedConfig = getAgentConfig(agentModel, agentModelUrl);
+        console.log(
+          `[Agent] model=${resolvedConfig.agentModelName} url=${resolvedConfig.agentModelUrl} analysis_id=${analysis_id}`,
+        );
+        try {
+          const pingRes = await fetch(`${resolvedConfig.agentModelUrl}/api/tags`, {
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (pingRes.ok) {
+            const tags = await pingRes.json();
+            const available = ((tags.models || []) as any[]).map((m: any) => m.name).join(", ");
+            const found = ((tags.models || []) as any[]).some(
+              (m: any) => m.name === resolvedConfig.agentModelName || m.model === resolvedConfig.agentModelName,
+            );
+            console.log(`[Agent] Ollama reachable — models: [${available || "none"}] — selected model found: ${found}`);
+            if (!found) {
+              console.warn(`[Agent] WARNING: "${resolvedConfig.agentModelName}" not in Ollama model list — pipeline will fail`);
+            }
+          } else {
+            console.warn(`[Agent] Ollama ping HTTP ${pingRes.status} at ${resolvedConfig.agentModelUrl}`);
+          }
+        } catch (pingErr) {
+          console.error(
+            `[Agent] Cannot reach Ollama at ${resolvedConfig.agentModelUrl}: ${pingErr instanceof Error ? pingErr.message : pingErr}`,
+          );
+        }
 
         const agentParams = {
           analysisId:       analysis_id,
@@ -210,11 +236,13 @@ export async function POST(request: NextRequest) {
           fileName:         analysis.file_name,
           agentModel,
           agentModelUrl,
+          onVlmThinking: (chunk: string) => send("thinking", { content: chunk }),
         };
 
+        // Small local models (4B–8B) cannot reliably do multi-step tool orchestration.
+        // Always run the deterministic pipeline — correct order guaranteed, no LLM guessing.
         try {
-          for await (const event of runAgent(agentParams)) {
-            // Trim large results before streaming; full data goes to final_answer
+          for await (const event of runFallbackPipeline(agentParams)) {
             if (event.type === "tool_result") {
               const trimmed = trimResultForStream(
                 (event.data as any).tool,
@@ -235,59 +263,10 @@ export async function POST(request: NextRequest) {
               });
             }
           }
-        } catch (agentErr) {
-          const reason = agentErr instanceof Error ? agentErr.message : "Agent error";
-
-          // Model is unreachable / returned a hard HTTP error.
-          if (agentErr instanceof ModelUnavailableError) {
-            console.error("[Agent] Model unavailable, not falling back:", reason);
-            await fail(`The selected model is unavailable: ${reason}. Please select a different agent model and try again.`);
-            return;
-          }
-
-          // User explicitly chose a model — don't silently fall back to the
-          // default vision model. Show the error so they can pick another model.
-          if (agentModel) {
-            const label = agentModel.split("/").pop()?.replace(/-cloud$/, "") ?? agentModel;
-            console.error(`[Agent] Chosen model "${label}" failed, not falling back:`, reason);
-            await fail(`Model "${label}" did not complete the analysis: ${reason}. Please try a different agent model.`);
-            return;
-          }
-
-          console.error("[Agent] Agent loop failed, switching to fallback:", reason);
-
-          send("status", {
-            step: 0, title: "Direct Pipeline",
-            message: "Agent did not complete — running direct analysis pipeline...",
-          });
-
-          try {
-            for await (const event of runFallbackPipeline({ ...agentParams, reason })) {
-              if (event.type === "tool_result") {
-                const trimmed = trimResultForStream(
-                  (event.data as any).tool,
-                  (event.data as any).result,
-                );
-                send(event.type, { ...(event.data as any), result: trimmed });
-              } else {
-                send(event.type, event.data);
-              }
-
-              if (event.type === "final_answer") {
-                succeeded = true;
-                await saveResults(analysis_id, event.data as any, agentLog);
-                sendDone({
-                  total_minutes: (event.data as any).results?.total_minutes || 0,
-                  total_usd:     (event.data as any).results?.total_usd     || 0,
-                  elapsed_seconds: elapsed(),
-                });
-              }
-            }
-          } catch (fallbackErr) {
-            const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : "Pipeline failed";
-            console.error("[Agent] Fallback pipeline also failed:", fbMsg);
-            send("error", { message: `Analysis failed: ${fbMsg}` });
-          }
+        } catch (pipelineErr) {
+          const msg = pipelineErr instanceof Error ? pipelineErr.message : "Pipeline failed";
+          console.error("[Agent] Deterministic pipeline failed:", msg);
+          send("error", { message: `Analysis failed: ${msg}` });
         }
 
         if (!succeeded) {

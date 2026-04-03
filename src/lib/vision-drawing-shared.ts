@@ -1,53 +1,76 @@
 /**
- * Shared prompts and merge helpers for VLM drawing extraction (analyze_drawing + vlmodel).
+ * Shared prompts and merge helpers for VLM drawing extraction.
+ *
+ * The VLM has ONE job: extract dimensions, tolerances, GD&T callouts,
+ * and thread specifications from the 2D drawing.
+ *
+ * Feature recognition is handled deterministically by Python/BrepMFR.
+ * Process mapping is handled by Python/FreeCAD Path rules.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export const SYSTEM_PROMPT = `You are a CNC manufacturing engineer. Extract manufacturing features \
-from 2D engineering drawings. Only extract what is clearly visible. \
-If something is unclear or missing, skip it. Respond with JSON only.`;
+// System prompt — concise role only. /no_think goes in the USER message for Qwen3-VL.
+export const SYSTEM_PROMPT = `You are a metrology specialist reading a 2D engineering drawing. \
+Extract dimensions, tolerances, GD&T callouts, and thread specifications. \
+Output JSON only.`;
 
-export const EXTRACTION_PROMPT = `This is one page from a PDF drawing pack (or a single image). Return a JSON object.
+// /no_think at the start of the USER message is the correct Qwen3 placement (not system prompt).
+export const EXTRACTION_PROMPT = `/no_think
+This is one page from a 2D engineering drawing PDF for a CNC machined part. Return a JSON object.
 
-If this page is NOT a technical drawing (cover sheet, logo/marketing only, blank, photo, or no part views/dimensions), return:
-{"features": [], "gdt": [], "material": null, "notes": ["non_technical_page"]}
+IMPORTANT: Attempt extraction on ANY page that contains dimension lines, measurement callouts, cross-section views, GD&T frames, or any technical annotation. CNC drawings often have dense layouts with hatching, multiple views, and small text — extract what you can read.
 
-If the entire image is completely unrelated to machining (not a drawing at all), return:
-{"features": [], "gdt": [], "material": null, "notes": ["Not an engineering drawing"]}
+Only return non_technical_page if the page is CLEARLY a pure cover sheet, company logo page, or completely blank with ZERO technical content. When in doubt, attempt extraction.
 
-If it IS an engineering drawing, extract the clearly visible features:
+If this page is clearly a non-technical page (pure cover sheet with no dimension lines, pure logo, or blank page):
+{"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}
+
+If the image is completely unrelated to engineering (photo, artwork):
+{"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["not_a_drawing"]}
+
+If it IS an engineering drawing, extract the clearly visible data:
 
 {
-  "features": [
+  "dimensions": [
     {
-      "id": "F001",
-      "type": "hole | fillet | radius | step | chamfer | thread | slot | pocket | bore | face",
-      "description": "short label",
-      "quantity": 1,
-      "dimensions": {"primary_value": 0.0, "unit": "mm"},
-      "tolerance": {"type": "bilateral", "plus": 0.0, "minus": 0.0}
+      "id": "D001",
+      "label": "short description e.g. 'Hole diameter', 'Overall length', 'Pocket depth'",
+      "nominal": 12.5,
+      "unit": "mm",
+      "tolerance_plus": 0.02,
+      "tolerance_minus": 0.02,
+      "quantity": 1
     }
   ],
   "gdt": [
     {
-      "feature_id": "F001",
-      "symbol": "position",
-      "tolerance": 0.0,
+      "id": "G001",
+      "symbol": "position | flatness | perpendicularity | parallelism | concentricity | runout | circularity | cylindricity | profile | angularity | symmetry | total_runout | straightness",
+      "tolerance": 0.05,
       "unit": "mm",
       "datums": ["A"]
     }
   ],
-  "material": {"specification": "material if stated, otherwise null", "stock_dimensions": "if visible"},
+  "threads": [
+    {
+      "id": "T001",
+      "spec": "M8x1.25 or 1/4-20 UNC",
+      "depth_mm": 15.0,
+      "quantity": 2
+    }
+  ],
+  "material": "specification e.g. 'AL6061-T6' or null if not shown",
+  "surface_finish": "e.g. 'Ra 1.6' or null if not shown",
   "notes": []
 }
 
 Rules:
-- Only include features you can clearly identify. Do not guess.
-- If material is not specified on the drawing, set material to null.
-- If a tolerance is not shown, omit the tolerance field for that feature.
-- If no GD&T callouts are visible, return an empty gdt array.
-- Return the JSON immediately. Do not explain or repeat.`;
+- Extract ONLY what is explicitly labeled on the drawing. Do not infer or guess.
+- For bilateral tolerance ±X: tolerance_plus = X, tolerance_minus = X.
+- If no tolerance callout exists for a dimension, omit tolerance_plus and tolerance_minus.
+- If no GD&T frame control symbols are visible, return empty gdt array.
+- Return JSON only. No explanations.`;
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
   let cleaned = rawText.trim();
@@ -61,13 +84,13 @@ export function parseModelJson(rawText: string): Record<string, unknown> {
   try {
     return JSON.parse(cleaned);
   } catch {
-    return { raw_model_output: rawText, features: [], gdt: [] };
+    return { raw_model_output: rawText, dimensions: [], gdt: [], threads: [] };
   }
 }
 
 function isHardRejectNotes(notes: string[]): boolean {
   return notes.some(
-    (n) => typeof n === "string" && n.toLowerCase().includes("not an engineering"),
+    (n) => typeof n === "string" && n.toLowerCase().includes("not_a_drawing"),
   );
 }
 
@@ -75,48 +98,58 @@ export type PageOutcome = "ok" | "hard_reject" | "soft_skip" | "unparseable";
 
 export function classifyPageParsed(parsed: Record<string, unknown>): PageOutcome {
   if (parsed.raw_model_output) return "unparseable";
-  const feats = (parsed.features as any[]) || [];
-  if (feats.length > 0) return "ok";
+  const dims    = (parsed.dimensions as any[]) || [];
+  const threads = (parsed.threads   as any[]) || [];
+  if (dims.length > 0 || threads.length > 0) return "ok";
   const notes = (parsed.notes as string[]) || [];
   if (isHardRejectNotes(notes)) return "hard_reject";
-  if (notes.some((n) => typeof n === "string" && n.toLowerCase().includes("non_technical"))) {
+  if (notes.some((n) => typeof n === "string" &&
+      (n.toLowerCase().includes("non_technical") ||
+       n.toLowerCase().includes("not_a_drawing")))) {
     return "soft_skip";
   }
-  return "soft_skip";
+  // Model returned valid JSON with no features and no classification note.
+  // This means the model couldn't extract anything (image quality issue or truly empty page).
+  // Treat as unparseable so the caller knows extraction was attempted but produced nothing,
+  // rather than silently skipping as if it were a cover sheet.
+  return "unparseable";
 }
 
-/** Merge per-page VLM JSON objects into one result (new feature ids). */
-export function mergeVisionParsedResults(parsedList: Record<string, unknown>[]): Record<string, unknown> {
-  const allFeatures: any[] = [];
-  const allGdt: any[] = [];
-  let material: unknown = null;
+/** Merge per-page VLM JSON objects into one result (renumbered IDs). */
+export function mergeVisionParsedResults(
+  parsedList: Record<string, unknown>[],
+): Record<string, unknown> {
+  const allDims:    any[] = [];
+  const allGdt:     any[] = [];
+  const allThreads: any[] = [];
+  let material:      unknown = null;
+  let surface_finish: unknown = null;
   const allNotes: string[] = [];
-  let idCounter = 1;
+  let dCounter = 1, gCounter = 1, tCounter = 1;
 
   for (const parsed of parsedList) {
     if (parsed.raw_model_output) continue;
-    const feats = (parsed.features as any[]) || [];
-    for (const f of feats) {
-      const { id: _drop, ...rest } = f;
-      allFeatures.push({
-        ...rest,
-        id: `F${String(idCounter++).padStart(3, "0")}`,
-      });
+
+    for (const d of (parsed.dimensions as any[]) || []) {
+      const { id: _d, ...rest } = d;
+      allDims.push({ ...rest, id: `D${String(dCounter++).padStart(3, "0")}` });
     }
-    allGdt.push(...((parsed.gdt as any[]) || []));
-    if (!material && parsed.material) material = parsed.material;
-    const n = (parsed.notes as string[]) || [];
-    for (const note of n) {
+    for (const g of (parsed.gdt as any[]) || []) {
+      const { id: _g, ...rest } = g;
+      allGdt.push({ ...rest, id: `G${String(gCounter++).padStart(3, "0")}` });
+    }
+    for (const t of (parsed.threads as any[]) || []) {
+      const { id: _t, ...rest } = t;
+      allThreads.push({ ...rest, id: `T${String(tCounter++).padStart(3, "0")}` });
+    }
+    if (!material      && parsed.material)       material       = parsed.material;
+    if (!surface_finish && parsed.surface_finish) surface_finish = parsed.surface_finish;
+    for (const note of (parsed.notes as string[]) || []) {
       if (typeof note === "string" && note.trim()) allNotes.push(note);
     }
   }
 
-  return {
-    features: allFeatures,
-    gdt: allGdt,
-    material,
-    notes: allNotes,
-  };
+  return { dimensions: allDims, gdt: allGdt, threads: allThreads, material, surface_finish, notes: allNotes };
 }
 
 export function summarizeOutcomes(outcomes: PageOutcome[]): {
@@ -124,11 +157,8 @@ export function summarizeOutcomes(outcomes: PageOutcome[]): {
   allHardReject: boolean;
   allBad: boolean;
 } {
-  const anyOk = outcomes.some((o) => o === "ok");
-  const allHardReject =
-    outcomes.length > 0 && outcomes.every((o) => o === "hard_reject");
-  const allBad =
-    outcomes.length > 0 &&
-    outcomes.every((o) => o === "hard_reject" || o === "unparseable");
+  const anyOk        = outcomes.some((o) => o === "ok");
+  const allHardReject = outcomes.length > 0 && outcomes.every((o) => o === "hard_reject");
+  const allBad        = outcomes.length > 0 && outcomes.every((o) => o === "hard_reject" || o === "unparseable");
   return { anyOk, allHardReject, allBad };
 }

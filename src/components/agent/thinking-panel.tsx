@@ -8,9 +8,10 @@ interface ThinkingPanelProps {
   content: string;
   isLive?: boolean;
   iteration?: number;
+  label?: string;
 }
 
-export function ThinkingPanel({ content, isLive, iteration }: ThinkingPanelProps) {
+export function ThinkingPanel({ content, isLive, iteration, label = "Model Thinking" }: ThinkingPanelProps) {
   const [open, setOpen] = useState(true);
   const ref = useRef<HTMLPreElement>(null);
 
@@ -28,7 +29,7 @@ export function ThinkingPanel({ content, isLive, iteration }: ThinkingPanelProps
       >
         <Brain className="w-4 h-4" />
         <span className="flex-1 text-left">
-          Agent Reasoning
+          {label}
           {iteration && <span className="text-amber-600/60 text-xs ml-1.5">Step {iteration}</span>}
         </span>
         {isLive && <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />}

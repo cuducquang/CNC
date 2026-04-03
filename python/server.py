@@ -1,14 +1,12 @@
 """
 CNCapp Python microservice — FastAPI server.
 
-Single responsibility: FreeCAD headless STEP geometry analysis.
-All other pipeline steps (VL extraction, feature tagging, process mapping,
-cost estimation) run in the Next.js layer.
-
-Endpoints:
-  POST /analyze/step  STEP feature recognition via FreeCAD (geometry only)
-  POST /convert-pdf   PDF → PNG base64 pages via pdftoppm (for Vercel fallback)
-  GET  /health        Health check (includes FreeCAD availability)
+Deterministic pipeline:
+  POST /analyze       Full analysis: STEP feature recognition + process mapping
+                       (accepts drawing_extraction JSON from VLM step in Next.js)
+  POST /analyze/step  STEP-only feature recognition (geometry, no process map)
+  POST /convert-pdf   PDF → PNG base64 pages via pdftoppm
+  GET  /health        Health check (FreeCAD availability)
 
 Run:
   py -3.11 -m uvicorn server:app --host 0.0.0.0 --port 8001 --reload
@@ -20,20 +18,28 @@ from __future__ import annotations
 
 import base64
 import glob
+import json
 import logging
 import os
 import subprocess
 import tempfile
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from freecad_analyzer import STEPAnalyzer, load_freecad
+from freecad_analyzer import (
+    STEPAnalyzer,
+    load_freecad,
+    recognize_features,
+    map_processes,
+    resolve_material,
+)
 import freecad_analyzer.step_analyzer as freecad_step
 from freecad_analyzer.models import (
     AnalysisResponse,
     FeatureRecognitionResult,
+    FullAnalysisResponse,
     RecognizedFeature,
     ShapeSummary,
 )
@@ -54,9 +60,13 @@ def _freecad_available() -> bool:
 
 
 app = FastAPI(
-    title="CNCapp STEP Analysis API",
-    description="FreeCAD headless STEP geometry analysis — feature recognition only.",
-    version="2.0.0",
+    title="CNCapp Analysis API",
+    description=(
+        "Deterministic CNC analysis pipeline.\n"
+        "POST /analyze — full feature recognition + process mapping.\n"
+        "POST /analyze/step — geometry-only feature recognition."
+    ),
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -80,19 +90,16 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# PDF → PNG conversion (used by Vercel which has no pdftoppm)
+# PDF → PNG conversion
 # ---------------------------------------------------------------------------
 
 @app.post("/convert-pdf")
 async def convert_pdf(
     file: UploadFile = File(..., description="PDF file to convert to PNG images"),
 ):
-    """
-    Convert a PDF to a list of base64-encoded PNG images using pdftoppm.
-    Returns: {"pages": ["<base64png>", ...], "count": N}
-    """
+    """Convert a PDF to base64-encoded PNG pages via pdftoppm."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = os.path.join(tmpdir, "input.pdf")
+        pdf_path   = os.path.join(tmpdir, "input.pdf")
         out_prefix = os.path.join(tmpdir, "page")
 
         with open(pdf_path, "wb") as f:
@@ -100,10 +107,11 @@ async def convert_pdf(
 
         try:
             subprocess.run(
-                ["pdftoppm", "-png", "-r", "150", "-f", "1", "-l", "32", pdf_path, out_prefix],
-                check=True,
-                timeout=120,
-                capture_output=True,
+                # 96 DPI: E-size drawings (34"×22") render to ~3264×2112px.
+            # 150 DPI produces ~5100×3300px which exceeds Qwen3-VL's ~4000-token visual context
+            # and causes content_len=0 (no room left for JSON output after image tokens).
+            ["pdftoppm", "-png", "-r", "96", "-f", "1", "-l", "32", pdf_path, out_prefix],
+                check=True, timeout=120, capture_output=True,
             )
         except FileNotFoundError:
             raise HTTPException(status_code=500, detail="pdftoppm not found on this server")
@@ -124,20 +132,50 @@ async def convert_pdf(
 
 
 # ---------------------------------------------------------------------------
-# STEP geometry analysis (the only analysis endpoint)
+# Full analysis: STEP + drawing extraction → features + process map
 # ---------------------------------------------------------------------------
 
-@app.post("/analyze/step", response_model=AnalysisResponse)
-async def analyze_step(
-    file_3d: UploadFile = File(..., description="STEP/STP file"),
+@app.post("/analyze", response_model=FullAnalysisResponse)
+async def analyze_full(
+    file_3d: UploadFile = File(..., description="STEP / STP file"),
+    drawing_extraction: str = Form(
+        default="",
+        description=(
+            "JSON string from VLM extraction step. "
+            "Schema: {dimensions, gdt, threads, material, surface_finish, notes}"
+        ),
+    ),
+    material: str = Form(
+        default="Al6061",
+        description="Material key override (used if drawing_extraction.material is absent)",
+    ),
 ):
     """
-    Analyze a STEP file with FreeCAD headless.
-    Returns shape summary and detected manufacturing features (geometry only).
-    VL extraction, feature tagging, process mapping and cost run in Next.js.
+    Full deterministic pipeline:
+      1. Feature recognition  — BrepMFR (if installed) → FreeCAD geometric fallback
+      2. Process mapping      — deterministic rule-based (FreeCAD Path concepts)
+
+    Returns shape summary, recognised features, and full process map.
+    Cycle time and cost estimation are computed in Next.js.
     """
     if not _freecad_available():
-        raise HTTPException(status_code=503, detail="FreeCAD not available. Set FREECAD_PATH and restart.")
+        raise HTTPException(
+            status_code=503,
+            detail="FreeCAD not available. Set FREECAD_PATH and restart.",
+        )
+
+    # Parse drawing extraction
+    extraction: dict = {}
+    if drawing_extraction.strip():
+        try:
+            extraction = json.loads(drawing_extraction)
+        except json.JSONDecodeError as exc:
+            logger.warning("drawing_extraction is not valid JSON: %s", exc)
+
+    # Resolve material: drawing spec takes priority over form field
+    mat_raw  = (extraction.get("material") or material or "Al6061")
+    mat_key  = resolve_material(mat_raw, default="Al6061")
+    logger.info("Resolved material: %r → %s", mat_raw, mat_key)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         step_path = os.path.join(tmpdir, file_3d.filename or "part.stp")
@@ -145,20 +183,97 @@ async def analyze_step(
             f.write(await file_3d.read())
 
         try:
-            logger.info("Analyzing STEP: %s  (%s)", step_path, file_3d.filename)
+            # ── 1. Feature Recognition ────────────────────────────────────────
+            logger.info("Feature recognition: %s", file_3d.filename)
+            features_raw, feat_source = recognize_features(step_path)
+            logger.info(
+                "Recognised %d features via %s",
+                len(features_raw), feat_source,
+            )
+            for fr in features_raw:
+                dims_clean = {
+                    k: v for k, v in fr.get("dimensions", {}).items()
+                    if not k.startswith("_")
+                }
+                logger.info(
+                    "  %-6s %-40s  %s",
+                    fr.get("id", "?"),
+                    fr.get("name", ""),
+                    "  ".join(f"{k}={v}" for k, v in dims_clean.items()),
+                )
+
+            # ── 2. Shape Summary (from FreeCAD — always available) ────────────
+            shape_summary = None
+            try:
+                raw_result   = STEPAnalyzer(step_path).analyze()
+                ss           = raw_result.get("shape_summary", {})
+                shape_summary = ShapeSummary(**ss) if ss else None
+            except Exception as exc:
+                logger.warning("Shape summary extraction failed: %s", exc)
+
+            # ── 3. Process Mapping ────────────────────────────────────────────
+            logger.info("Process mapping for %d features (material=%s)", len(features_raw), mat_key)
+            process_map = map_processes(features_raw, extraction, mat_key)
+            logger.info("Generated %d operations", len(process_map))
+
+            # Build typed feature objects
+            feature_objects = [
+                RecognizedFeature(
+                    id=f.get("id", "?"),
+                    name=f.get("name", ""),
+                    type=f.get("type", "other"),
+                    description=f.get("description", ""),
+                    dimensions={
+                        k: v for k, v in f.get("dimensions", {}).items()
+                        if not k.startswith("_")
+                    },
+                    source=f.get("source", feat_source),
+                )
+                for f in features_raw
+            ]
+
+            return FullAnalysisResponse(
+                success=True,
+                shape_summary=shape_summary,
+                features=feature_objects,
+                process_map=process_map,
+                feature_source=feat_source,
+            )
+
+        except Exception as exc:
+            logger.exception("Full analysis failed")
+            return FullAnalysisResponse(success=False, error=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# STEP-only geometry analysis (kept for diagnostics / compatibility)
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze/step", response_model=AnalysisResponse)
+async def analyze_step(
+    file_3d: UploadFile = File(..., description="STEP/STP file"),
+):
+    """
+    Geometry-only feature recognition via FreeCAD.
+    Returns shape summary and raw feature list — no process mapping.
+    """
+    if not _freecad_available():
+        raise HTTPException(status_code=503, detail="FreeCAD not available.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        step_path = os.path.join(tmpdir, file_3d.filename or "part.stp")
+        with open(step_path, "wb") as f:
+            f.write(await file_3d.read())
+
+        try:
+            logger.info("STEP-only analysis: %s", file_3d.filename)
             result = STEPAnalyzer(step_path).analyze()
 
-            # ---------------------------------------------------------------
-            # Log extracted feature list so you can trace what was detected
-            # ---------------------------------------------------------------
             ss = result.get("shape_summary", {})
             logger.info(
                 "Shape: %s  faces=%d  bbox=%.2f×%.2f×%.2f mm  vol=%.1f mm³",
-                ss.get("shape_type"),
-                ss.get("n_faces"),
-                ss.get("bbox_x_mm", 0),
-                ss.get("bbox_y_mm", 0),
-                ss.get("bbox_z_mm", 0),
+                ss.get("shape_type"), ss.get("n_faces"),
+                ss.get("bbox_x_mm", 0), ss.get("bbox_y_mm", 0), ss.get("bbox_z_mm", 0),
                 ss.get("volume_mm3", 0),
             )
 
@@ -167,21 +282,11 @@ async def analyze_step(
             for f in feats:
                 t = f.get("type", "other")
                 type_counts[t] = type_counts.get(t, 0) + 1
-
             logger.info(
                 "Extracted %d features: %s",
                 len(feats),
                 "  ".join(f"{t}={n}" for t, n in sorted(type_counts.items())),
             )
-            for f in feats:
-                dims = {k: v for k, v in f.get("dimensions", {}).items() if not k.startswith("_")}
-                logger.info(
-                    "  %-6s %-40s  %s",
-                    f.get("id", "?"),
-                    f.get("name", ""),
-                    "  ".join(f"{k}={v}" for k, v in dims.items()),
-                )
-            # ---------------------------------------------------------------
 
             feat_objects = [
                 RecognizedFeature(
@@ -194,12 +299,12 @@ async def analyze_step(
                         if not k.startswith("_")
                     },
                 )
-                for f in result["features"]
+                for f in feats
             ]
 
             return AnalysisResponse(
                 success=True,
-                shape_summary=ShapeSummary(**result["shape_summary"]),
+                shape_summary=ShapeSummary(**ss),
                 feature_recognition=FeatureRecognitionResult(features=feat_objects),
             )
 

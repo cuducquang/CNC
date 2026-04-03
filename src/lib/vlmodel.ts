@@ -11,7 +11,6 @@ import {
 import { collectOllamaVisionChat } from "./vision-ollama-stream";
 
 export type StreamEvent =
-  | { type: "thinking"; data: { content: string } }
   | { type: "result"; data: Record<string, unknown> };
 
 export { parseModelJson };
@@ -19,14 +18,11 @@ export { parseModelJson };
 export async function* extractFeaturesStream(
   imageBase64: string,
 ): AsyncGenerator<StreamEvent> {
-  const { thinking, content } = await collectOllamaVisionChat(
+  const { content } = await collectOllamaVisionChat(
     imageBase64,
     SYSTEM_PROMPT,
     EXTRACTION_PROMPT,
   );
-  if (thinking.trim()) {
-    yield { type: "thinking", data: { content: thinking } };
-  }
   yield { type: "result", data: parseModelJson(content) };
 }
 
@@ -45,10 +41,7 @@ export async function* extractFeaturesStreamFromPages(
   const parsedList: Record<string, unknown>[] = [];
 
   for (let i = 0; i < imageBase64Pages.length; i++) {
-    yield {
-      type: "thinking",
-      data: { content: `Analyzing drawing page ${i + 1} of ${imageBase64Pages.length}...` },
-    };
+    console.log(`[VLM] Analyzing page ${i + 1} of ${imageBase64Pages.length}...`);
     try {
       const { content } = await collectOllamaVisionChat(
         imageBase64Pages[i],

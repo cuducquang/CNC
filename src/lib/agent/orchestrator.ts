@@ -41,7 +41,6 @@ export class ModelUnavailableError extends Error {
 // ---------------------------------------------------------------------------
 
 interface OllamaResponse {
-  thinking:  string;
   content:   string;
   toolCalls: ToolCall[];
   done:      boolean;
@@ -86,68 +85,41 @@ async function callOllamaWithTools(
   config: ReturnType<typeof getAgentConfig>,
 ): Promise<OllamaResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (config.agentApiKey) headers["Authorization"] = `Bearer ${config.agentApiKey}`;
+  const modelName = config.agentModelName;
 
-  const modelName = config.agentModelName.replace(/-cloud$/, "");
-  const isOpenAI  = config.agentApiFormat === "openai";
-
-  // Sanitise messages for the target API format.
-  // Ollama: tool_calls.arguments must be an object; no tool_call_id on tool messages.
-  // OpenAI: tool_calls.arguments must be a JSON string; tool_call_id required on tool messages.
+  // Ollama format: tool_calls.arguments must be an object (not a JSON string).
   const sanitisedMessages = messages.map((m) => {
     const msg: Record<string, unknown> = {
       role:    m.role,
       content: typeof m.content === "string" ? m.content.slice(0, 50_000) : (m.content ?? ""),
     };
-    if (m.tool_call_id) msg.tool_call_id = m.tool_call_id;
     if (m.tool_calls) {
-      if (isOpenAI) {
-        msg.tool_calls = m.tool_calls.map((tc) => ({
-          id:       tc.id || `call_${Date.now()}`,
-          type:     "function",
-          function: {
-            name:      tc.function.name,
-            arguments: typeof tc.function.arguments === "string"
-              ? tc.function.arguments
-              : JSON.stringify(tc.function.arguments ?? {}),
-          },
-        }));
-      } else {
-        msg.tool_calls = m.tool_calls.map((tc) => ({
-          function: {
-            name:      tc.function.name,
-            arguments: (() => {
-              try {
-                const a = tc.function.arguments;
-                return typeof a === "string" ? JSON.parse(a) : a;
-              } catch { return {}; }
-            })(),
-          },
-        }));
-      }
+      msg.tool_calls = m.tool_calls.map((tc) => ({
+        function: {
+          name:      tc.function.name,
+          arguments: (() => {
+            try {
+              const a = tc.function.arguments;
+              return typeof a === "string" ? JSON.parse(a) : a;
+            } catch { return {}; }
+          })(),
+        },
+      }));
     }
-    if (!isOpenAI && m.images) msg.images = m.images;
+    if (m.images) msg.images = m.images;
     return msg;
   });
 
-  const payload = isOpenAI
-    ? {
-        model:       modelName,
-        messages:    sanitisedMessages,
-        tools:       tools.map((t) => ({ type: "function", function: t.function })),
-        stream:      true,
-        temperature: config.temperature,
-      }
-    : {
-        model:    modelName,
-        messages: sanitisedMessages,
-        tools,
-        ...(config.supportsThinking ? { think: true } : {}),
-        stream:   true,
-        options:  { temperature: config.temperature },
-      };
+  const payload = {
+    model:    modelName,
+    messages: sanitisedMessages,
+    tools,
+    think:    false,   // Disable chain-of-thought — small models waste context on thinking tokens
+    stream:   true,
+    options:  { temperature: config.temperature },
+  };
 
-  const apiPath = isOpenAI ? (config.agentChatPath ?? "/v1/chat/completions") : "/api/chat";
+  const apiPath = "/api/chat";
 
   const candidateBaseUrls = buildCandidateBaseUrls(config.agentModelUrl);
   let response: Response | undefined;
@@ -194,8 +166,7 @@ async function callOllamaWithTools(
     if (status === 400 || status === 422) {
       console.warn(`[Agent] Model returned ${status} (recoverable): ${errBody.slice(0, 200)}`);
       return {
-        thinking: "",
-        content:  "I encountered a model processing error. Let me provide results based on what I have gathered so far.",
+        content:   "I encountered a model processing error. Let me provide results based on what I have gathered so far.",
         toolCalls: [],
         done: true,
       };
@@ -209,7 +180,6 @@ async function callOllamaWithTools(
   const reader  = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer       = "";
-  let fullThinking = "";
   let fullContent  = "";
   let toolCalls: (ToolCall | undefined)[] = [];
   let streamInterrupted = false;
@@ -229,50 +199,29 @@ async function callOllamaWithTools(
         if (jsonStr === "[DONE]") break;
         try {
           const chunk = JSON.parse(jsonStr);
+          // Ollama streaming format
+          const msg = chunk.message || {};
+          if (msg.content) fullContent += msg.content;
 
-          if (isOpenAI) {
-            // OpenAI streaming format
-            const delta = chunk.choices?.[0]?.delta || {};
-            if (delta.thinking) fullThinking += delta.thinking;
-            if (delta.content)  fullContent  += delta.content;
-
-            if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index ?? 0;
-                if (!toolCalls[idx]) {
-                  toolCalls[idx] = { id: tc.id || `call_${Date.now()}_${idx}`, function: { name: "", arguments: "" } };
-                }
-                if (tc.function?.name)      toolCalls[idx].function.name      += tc.function.name;
-                if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+          if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+            const parsedCalls: ToolCall[] = [];
+            for (let i = 0; i < msg.tool_calls.length; i++) {
+              const tc = msg.tool_calls[i];
+              try {
+                const rawArgs = tc.function?.arguments;
+                const argsStr = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
+                if (typeof rawArgs === "string") JSON.parse(rawArgs); // validate
+                parsedCalls.push({
+                  id:       `call_${Date.now()}_${i}`,
+                  function: { name: tc.function.name, arguments: argsStr },
+                });
+              } catch {
+                console.warn(`[Agent] Skipping malformed tool call: ${tc.function?.name}`);
               }
             }
-            if (chunk.choices?.[0]?.finish_reason === "stop") break;
-          } else {
-            // Ollama streaming format
-            const msg = chunk.message || {};
-            if (msg.thinking) fullThinking += msg.thinking;
-            if (msg.content)  fullContent  += msg.content;
-
-            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-              const parsedCalls: ToolCall[] = [];
-              for (let i = 0; i < msg.tool_calls.length; i++) {
-                const tc = msg.tool_calls[i];
-                try {
-                  const rawArgs = tc.function?.arguments;
-                  const argsStr = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs ?? {});
-                  if (typeof rawArgs === "string") JSON.parse(rawArgs); // validate
-                  parsedCalls.push({
-                    id:       `call_${Date.now()}_${i}`,
-                    function: { name: tc.function.name, arguments: argsStr },
-                  });
-                } catch {
-                  console.warn(`[Agent] Skipping malformed tool call: ${tc.function?.name}`);
-                }
-              }
-              if (parsedCalls.length > 0) toolCalls = parsedCalls;
-            }
-            if (chunk.done) break;
+            if (parsedCalls.length > 0) toolCalls = parsedCalls;
           }
+          if (chunk.done) break;
         } catch { /* skip malformed JSON chunks */ }
       }
     }
@@ -281,16 +230,8 @@ async function callOllamaWithTools(
     streamInterrupted = true;
   }
 
-  // Handle <think> tags embedded in content
-  if (!fullThinking && fullContent.includes("<think>") && fullContent.includes("</think>")) {
-    const thinkPart = fullContent.split("<think>")[1]?.split("</think>")[0];
-    if (thinkPart?.trim()) fullThinking = thinkPart.trim();
-    fullContent = fullContent.split("</think>").slice(1).join("</think>").trim() || fullContent;
-  }
-
   const validToolCalls = toolCalls.filter((tc): tc is ToolCall => !!tc);
   return {
-    thinking: fullThinking,
     content: fullContent,
     toolCalls: validToolCalls,
     done: validToolCalls.length === 0,
@@ -453,10 +394,6 @@ export async function* runAgent(params: AgentRunParams): AsyncGenerator<AgentEve
       continue;
     }
 
-    if (response.thinking) {
-      yield { type: "thinking", data: { content: response.thinking, iteration } };
-    }
-
     // ---- Process tool calls ----
     if (response.toolCalls.length > 0) {
       messages.push({ role: "assistant", content: response.content || "", tool_calls: response.toolCalls });
@@ -505,9 +442,6 @@ export async function* runAgent(params: AgentRunParams): AsyncGenerator<AgentEve
             analysisId:       params.analysisId,
             visionModelUrl:   config.visionModelUrl,
             visionModelName:  config.visionModelName,
-            visionApiKey:     config.visionApiKey,
-            visionApiFormat:  config.visionApiFormat,
-            visionChatPath:   config.visionChatPath,
           });
         } catch (toolErr) {
           result = { error: toolErr instanceof Error ? toolErr.message : "Tool execution failed" };

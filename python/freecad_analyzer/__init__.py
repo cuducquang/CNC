@@ -1,14 +1,18 @@
 """
-FreeCAD headless STEP analyzer — geometry feature recognition only.
+FreeCAD headless STEP analyser + deterministic process mapper.
 
 Usage:
-  from freecad_analyzer import STEPAnalyzer, load_freecad
+  from freecad_analyzer import recognize_features, map_processes, load_freecad
   load_freecad()
-  result = STEPAnalyzer("part.stp").analyze()
+
+  features, source = recognize_features("part.stp")
+  ops = map_processes(features, extraction_dict, material="Al6061")
 """
 
 import freecad_analyzer.step_analyzer as step_analyzer
 from .step_analyzer import STEPAnalyzer, load_freecad, FREECAD_AVAILABLE
+from .brepMFR_recognizer import recognize_features
+from .process_mapper import map_processes, resolve_material
 
 
 def is_freecad_available() -> bool:
@@ -18,8 +22,14 @@ def is_freecad_available() -> bool:
 
 
 __all__ = [
+    # FreeCAD geometry
     "STEPAnalyzer",
     "load_freecad",
     "FREECAD_AVAILABLE",
     "is_freecad_available",
+    # Feature recognition (BrepMFR → FreeCAD fallback)
+    "recognize_features",
+    # Process mapping
+    "map_processes",
+    "resolve_material",
 ]

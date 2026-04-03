@@ -6,12 +6,28 @@
  * 3) Python microservice /convert-pdf — fallback for Vercel (no poppler, no native canvas).
  *
  * Non-PDF buffers are returned as a single "page" (raw base64).
+ *
+ * IMAGE SIZE STRATEGY
+ * ───────────────────
+ * The drawing in this repo is ANSI E-size (34"×22"). At 150 DPI that is 5100×3300 px,
+ * which the qwen3-vl visual encoder processes as ~96 tiles (448px each) → 300 s+ per page.
+ *
+ * Fix: render at 150 DPI for quality (2mm dim text → 12 px), then resize the PNG so the
+ * longest side is at most MAX_LONG_PX (2000 px). For E-size this gives an effective ~59 DPI
+ * at the output, which is still readable for typical 2-5 mm annotation text (5-12 px).
+ * The resulting 2000×1294 image needs only 5×3 = 15 tiles → ~25 s/page on A4500.
+ *
+ * For smaller sheets (letter, B-size) the cap rarely fires; those pages render at full 150 DPI.
  */
 
 import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+
+// Maximum number of pixels on the longest side sent to the VLM.
+// Keeps tile count low enough for timely inference on E-size drawings.
+const MAX_LONG_PX = 2000;
 
 export function isPdfBuffer(buffer: Buffer): boolean {
   return buffer.length > 4 && buffer.slice(0, 4).toString("ascii") === "%PDF";
@@ -33,8 +49,28 @@ function naturalPngSort(a: string, b: string): number {
   return na - nb;
 }
 
+/**
+ * Resize a PNG buffer so its longest side is at most maxLong pixels.
+ * Returns the original buffer untouched if already within limits.
+ */
+async function capLongSide(pngBuffer: Buffer, maxLong: number): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  const { width = 0, height = 0 } = await sharp(pngBuffer).metadata();
+  const longest = Math.max(width, height);
+  if (longest <= maxLong) return pngBuffer;
+
+  const scale = maxLong / longest;
+  const newW = Math.round(width * scale);
+  const newH = Math.round(height * scale);
+  console.log(`[pdf-to-image] resize ${width}x${height} → ${newW}x${newH} (cap ${maxLong}px)`);
+  return sharp(pngBuffer)
+    .resize(newW, newH, { fit: "inside", kernel: "lanczos3" })
+    .png()
+    .toBuffer();
+}
+
 /** Render PDF pages to PNG base64 strings via pdftoppm (pages 1..last, capped). */
-function pdfViaPoppler(pdfBuffer: Buffer, maxPages: number): string[] {
+async function pdfViaPoppler(pdfBuffer: Buffer, maxPages: number): Promise<string[]> {
   const tmpId = `cnc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const tmpPdf = path.join(os.tmpdir(), `${tmpId}.pdf`);
   const tmpOutPrefix = path.join(os.tmpdir(), tmpId);
@@ -42,6 +78,8 @@ function pdfViaPoppler(pdfBuffer: Buffer, maxPages: number): string[] {
   fs.writeFileSync(tmpPdf, pdfBuffer);
 
   try {
+    // 150 DPI: 2–3 mm dimension text → 12–18 px — reliably readable by the VLM.
+    // capLongSide() below keeps E-size (5100×3300 at 150 DPI) from overloading the encoder.
     execFileSync(
       "pdftoppm",
       ["-png", "-r", "150", "-f", "1", "-l", String(maxPages), tmpPdf, tmpOutPrefix],
@@ -59,8 +97,10 @@ function pdfViaPoppler(pdfBuffer: Buffer, maxPages: number): string[] {
     const out: string[] = [];
     for (const f of outFiles) {
       const pngPath = path.join(os.tmpdir(), f);
-      out.push(fs.readFileSync(pngPath).toString("base64"));
+      const raw = fs.readFileSync(pngPath);
       fs.unlinkSync(pngPath);
+      const resized = await capLongSide(raw, MAX_LONG_PX);
+      out.push(resized.toString("base64"));
     }
     return out;
   } finally {
@@ -82,14 +122,21 @@ async function pdfViaPdfJs(pdfBuffer: Buffer, maxPages: number): Promise<string[
   const doc = await loadingTask.promise;
   const numPages = Math.min(doc.numPages, maxPages);
   const out: string[] = [];
-  const scale = 150 / 72;
+  // Target 150 DPI but cap to MAX_LONG_PX so E-size sheets don't overwhelm the VLM encoder.
+  const TARGET_DPI = 150;
 
   try {
     for (let i = 1; i <= numPages; i++) {
       const page = await doc.getPage(i);
+      const naturalViewport = page.getViewport({ scale: 1 });
+      const naturalMax = Math.max(naturalViewport.width, naturalViewport.height);
+      const scaleForDpi   = TARGET_DPI / 72;
+      const scaleForCap   = MAX_LONG_PX / (naturalMax * (TARGET_DPI / 72));
+      const scale = Math.min(scaleForDpi, scaleForDpi * scaleForCap);
       const viewport = page.getViewport({ scale });
       const w = Math.ceil(viewport.width);
       const h = Math.ceil(viewport.height);
+      console.log(`[pdf-to-image] pdfjs page ${i}: ${w}x${h}px`);
       const canvas = createCanvas(w, h);
       const ctx = canvas.getContext("2d");
 
@@ -162,7 +209,7 @@ export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string
   if (!onVercel) {
     // Local / Docker: try fast native methods first
     try {
-      const pages = pdfViaPoppler(buffer, maxPages);
+      const pages = await pdfViaPoppler(buffer, maxPages);
       console.log(`[pdf-to-image] PDF → ${pages.length} page(s) via pdftoppm`);
       return applySkipFirstPage(pages);
     } catch (err) {

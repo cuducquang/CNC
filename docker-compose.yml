@@ -28,7 +28,6 @@ services:
         # when you run: docker compose --env-file .env.local up --build
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-        NEXT_PUBLIC_AGENT_MODEL: ${NEXT_PUBLIC_AGENT_MODEL}
     ports:
       - "3000:3000"
     depends_on:
@@ -41,9 +40,14 @@ services:
     env_file:
       - .env.local        # server-side vars injected at runtime (API keys, model URLs, etc.)
     environment:
-      # Internal service wiring — not in .env.local
+      # Internal service wiring — hardcoded, not in .env.local
+      # (inside Docker, python-service resolves via Docker DNS, not localhost)
       PYTHON_SERVICE_URL: http://python-service:8001
+      # LOCAL_OLLAMA_URL and VISION_TIMEOUT_MS come from .env.local
+      # (currently pointing to RunPod: https://xfytmq5q4g3twd-11434.proxy.runpod.net)
+      # To switch to local Ollama: update LOCAL_OLLAMA_URL in .env.local
       # Vision-call runtime controls
-      VISION_TIMEOUT_MS: "120000"
-      PDF_MAX_PAGES_FOR_VISION: "2"
-      VISION_PAGE_CONCURRENCY: "2"
+      # Rasterize up to 4 pages — all are tried, results merged.
+      # Pages are processed one at a time (sequential) to avoid VRAM overload on small models.
+      PDF_MAX_PAGES_FOR_VISION: "4"
+      VISION_PAGE_CONCURRENCY: "1"

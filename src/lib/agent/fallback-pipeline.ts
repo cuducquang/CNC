@@ -17,6 +17,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import type { AgentEvent } from "./types";
+import { getAgentConfig } from "./config";
 import { buildPipelineResults } from "../pipeline-results";
 import { analyzeDrawing    } from "../tools/analyze-drawing";
 import { analyzeStepFile   } from "../tools/analyze-step-file";
@@ -32,6 +33,10 @@ interface FallbackParams {
   stepFileContent?: string;
   fileName: string;
   reason?: string;
+  /** Selected model (from AgentRunParams) — used to resolve the vision endpoint */
+  agentModel?: string;
+  /** Called on every VLM thinking token chunk — use to stream thinking to the UI */
+  onVlmThinking?: (chunk: string) => void;
 }
 
 // ── Helper: emit status → tool_call → run fn → emit tool_result ─────────────
@@ -75,6 +80,9 @@ function partial(
 // ---------------------------------------------------------------------------
 
 export async function* runFallbackPipeline(params: FallbackParams): AsyncGenerator<AgentEvent> {
+  // Resolve vision model endpoint from the selected model (same as agent config).
+  const visionConfig = getAgentConfig(params.agentModel);
+
   // ── Step 1: 2D GD&T extraction ────────────────────────────────────────────
   let extraction: Record<string, unknown> | null = null;
 
@@ -84,6 +92,9 @@ export async function* runFallbackPipeline(params: FallbackParams): AsyncGenerat
     () => analyzeDrawing({ drawing_id: params.analysisId }, {
       imageBase64:      params.imageBase64,
       imageBase64Pages: params.imageBase64Pages,
+      visionModelUrl:   visionConfig.visionModelUrl,
+      visionModelName:  visionConfig.visionModelName,
+      onThinking:       params.onVlmThinking,
     }),
   )) {
     yield event;
