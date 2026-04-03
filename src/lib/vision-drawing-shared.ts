@@ -17,11 +17,7 @@ Output JSON only.`;
 
 // /no_think at the start of the USER message is the correct Qwen3 placement (not system prompt).
 export const EXTRACTION_PROMPT = `/no_think
-This is one page from a 2D engineering drawing PDF for a CNC machined part. Return a JSON object.
-
-IMPORTANT: Attempt extraction on ANY page that contains dimension lines, measurement callouts, cross-section views, GD&T frames, or any technical annotation. CNC drawings often have dense layouts with hatching, multiple views, and small text — extract what you can read.
-
-Only return non_technical_page if the page is CLEARLY a pure cover sheet, company logo page, or completely blank with ZERO technical content. When in doubt, attempt extraction.
+TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page. Write the complete JSON answer NOW — before any verification or analysis. Output JSON first, then check if needed.
 
 If this page is clearly a non-technical page (pure cover sheet with no dimension lines, pure logo, or blank page):
 {"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}
@@ -72,8 +68,8 @@ Rules:
 - If no GD&T frame control symbols are visible, return empty gdt array.
 - RADIUS vs THREAD: "R" prefix always means RADIUS (e.g., R2.340, R4.50, 4X R4.50, 3X R2.340 are all radius dimensions). Never classify an R-prefixed value as a thread. Threads always include a pitch and standard callout: M8x1.25, 1/4-20 UNC, 3/8 NPT, TAP, THRU, etc.
 - REFERENCE DIMENSIONS: Values in parentheses () are reference (non-toleranced) dimensions. "2X 18.215 (17.362)" means 2 features, nominal 18.215, reference 17.362 — it is a hole/feature dimension, NOT a thread.
-- BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). The "DIMENSIONS" column in a BOM table contains part numbers, not engineering measurements. Skip BOM table entries entirely when extracting dimensions.
-- Once you have identified all dimension callouts on the drawing view, write the JSON immediately without re-checking each item.
+- BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). The "DIMENSIONS" column in a BOM table contains part numbers, not engineering measurements. Skip BOM table entries entirely.
+- The "notes" field must always be [] (empty array) for a drawing page. Do NOT put engineering text notes in this field.
 - Return JSON only. No explanations.`;
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
