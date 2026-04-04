@@ -10,6 +10,9 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "CNC Costing AI | Agentic Manufacturing Intelligence",
   description: "AI-powered CNC machined part costing with agentic pipeline orchestration",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Cpu, Upload, History, Menu } from "lucide-react";
+import { Upload, History, Menu } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 import { UserMenu } from "@/components/auth/user-menu";
 
@@ -29,7 +30,7 @@ export function Header() {
           >
             <Menu className="w-5 h-5" />
           </Button>
-          <Cpu className="w-5 h-5" />
+          <Image src="/logo.svg" alt="CNC Costing AI" width={20} height={20} />
           <span className="font-semibold text-sm">CNC Costing AI</span>
         </div>
 

@@ -7,8 +7,8 @@ import {
   Upload,
   History,
   Bot,
-  Cpu,
 } from "lucide-react";
+import Image from "next/image";
 
 const navItems = [
   { href: "/", label: "New Analysis", icon: Upload },
@@ -23,7 +23,7 @@ export function Sidebar() {
       {/* Brand */}
       <div className="flex items-center gap-3 px-6 h-16 border-b border-sidebar-border">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-          <Cpu className="w-4 h-4" />
+          <Image src="/logo.svg" alt="CNC Costing AI" width={18} height={18} className="invert" />
         </div>
         <div>
           <div className="font-semibold text-sm">CNC Costing AI</div>
