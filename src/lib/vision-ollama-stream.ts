@@ -132,7 +132,6 @@ export async function collectOllamaVisionChat(
       { role: "system", content: systemPrompt },
       { role: "user",   content: userPrompt, images: [imageBase64] },
     ],
-    think:   false,   // Disable Qwen3 thinking mode at API level
     stream:  true,
     options: {
       temperature: 0.1,

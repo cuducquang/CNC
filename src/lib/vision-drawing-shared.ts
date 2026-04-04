@@ -11,14 +11,12 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// System prompt — concise role only. /no_think goes in the USER message for Qwen3-VL.
+// System prompt — concise role only.
 export const SYSTEM_PROMPT = `You are a metrology specialist reading a 2D engineering drawing. \
 Extract dimensions, tolerances, GD&T callouts, and thread specifications. \
 Output JSON only.`;
 
-// /no_think at the start of the USER message is the correct Qwen3 placement (not system prompt).
-export const EXTRACTION_PROMPT = `/no_think
-TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page. Write the complete JSON answer NOW — before any verification or analysis. Output JSON first, then check if needed.
+export const EXTRACTION_PROMPT = `TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page. Write the complete JSON answer NOW — before any verification or analysis. Output JSON first, then check if needed.
 
 If this page is ONLY a company logo, blank page, or pure title/cover with zero drawing geometry (no dimension lines, no feature callouts, no measurement values anywhere on the page):
 {"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}

@@ -114,7 +114,6 @@ async function callOllamaWithTools(
     model:    modelName,
     messages: sanitisedMessages,
     tools,
-    think:    false,   // Disable chain-of-thought — small models waste context on thinking tokens
     stream:   true,
     options:  { temperature: config.temperature },
   };
