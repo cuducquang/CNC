@@ -1,5 +1,6 @@
 /**
  * Shared prompts and merge helpers for VLM drawing extraction.
+ * RunPod pod: dj1orhn3zlexd8 (RTX A4500, migrated 2026-04-04)
  *
  * The VLM has ONE job: extract dimensions, tolerances, GD&T callouts,
  * and thread specifications from the 2D drawing.
