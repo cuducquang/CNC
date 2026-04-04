@@ -366,11 +366,11 @@ export async function collectOllamaVisionChat(
       }
 
       // qwen3-vl thinking mode can loop indefinitely (Ollama uses sliding-window context).
-      // If thinking exceeds ~50k chars the model is stuck in a verification loop.
-      // Break now so extractJsonFromThinking can recover the answer from the first pass.
-      // 50k fires at ~270s on A4500, safely before Vercel's 300s function timeout.
-      if (thinkContent.length > 50_000) {
-        console.warn(`[vision-ollama] Thinking exceeded 50k chars (${thinkContent.length}) — breaking out of thinking loop`);
+      // If thinking exceeds ~15k chars the model is likely stuck in a verification loop.
+      // Break now so extractJsonFromThinking / the two-call fallback can recover the answer.
+      // 15k ≈ 3750 thinking tokens ≈ ~60-90s on A4500, well within the Vercel timeout.
+      if (thinkContent.length > 15_000) {
+        console.warn(`[vision-ollama] Thinking exceeded 15k chars (${thinkContent.length}) — breaking early to trigger fallback`);
         break;
       }
     }

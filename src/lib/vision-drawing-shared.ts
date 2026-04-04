@@ -100,9 +100,10 @@ Rules:
 - REFERENCE DIMENSIONS: Values in parentheses () are reference (non-toleranced) dimensions. "2X 18.215 (17.362)" means 2 features, nominal 18.215, reference 17.362 — it is a hole/feature dimension, NOT a thread.
 - BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). The "DIMENSIONS" column in a BOM table contains part numbers, not engineering measurements. Skip BOM table entries entirely.
 - DEDUPLICATION: If the same nominal value appears multiple times (e.g., R3.264 appears in 8 places), create ONE entry with quantity=8. Do NOT list it multiple times. Each unique nominal value gets exactly one JSON entry.
+- MULTI-LOCATION CALLOUT: When you see "3X R2.340 (2.340)" in multiple locations on the drawing, ALL those callouts describe the SAME group of 3 radius features. Record it ONCE as {nominal: 2.340, quantity: 3}. The "(2.340)" is a reference annotation — it does NOT create a second entry. Do not compare the same callout to itself.
 - ONE PASS ONLY: Scan the drawing once. Record each unique dimension once (with quantity). Do not re-examine, re-list, or re-verify values. Write the JSON immediately after your single pass.
 - The "notes" field must always be [] (empty array) for a drawing page. Do NOT put engineering text notes in this field.
-- STOP RULE: The moment you catch yourself writing "wait", "no,", "actually", or re-reading a value you already recorded — stop immediately and write the JSON. Do not revise any previously noted value.
+- STOP RULE: If you are about to write "Wait", "no,", "actually", or repeat a value you already noted — STOP. Do not write the word "Wait". Instead, immediately output the JSON. Every "Wait" token costs you the whole result. Write JSON now.
 - Return JSON only. No explanations.`;
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
