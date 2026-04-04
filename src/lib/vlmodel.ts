@@ -50,13 +50,20 @@ export async function* extractFeaturesStreamFromPages(
       );
       parsedList.push(parseModelJson(content));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // If the model itself is dead (inactivity / RunPod stopped), abort all remaining pages
+      // immediately instead of waiting 30s × N more pages.
+      if (msg.includes("stopped responding") || msg.includes("no tokens received")) {
+        console.warn(`[VLM] Page ${i + 1} — model stopped, aborting remaining pages`);
+        throw err;
+      }
       console.warn(`[VLM] Page ${i + 1} failed:`, err);
       parsedList.push({
         features: [],
         gdt: [],
         material: null,
         notes: [],
-        raw_model_output: err instanceof Error ? err.message : String(err),
+        raw_model_output: msg,
       });
     }
   }

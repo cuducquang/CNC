@@ -36,8 +36,10 @@ export default function AnalysisDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [pollTimedOut, setPollTimedOut] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCount = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -52,6 +54,10 @@ export default function AnalysisDetailPage() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+    if (elapsedRef.current) {
+      clearInterval(elapsedRef.current);
+      elapsedRef.current = null;
     }
     setPolling(false);
     pollCount.current = 0;
@@ -89,6 +95,10 @@ export default function AnalysisDetailPage() {
   // Polling when status is processing/pending
   useEffect(() => {
     if (!polling) return;
+
+    // Elapsed time counter (updates every second for the processing banner)
+    setElapsedSeconds(0);
+    elapsedRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
 
     pollRef.current = setInterval(async () => {
       pollCount.current += 1;
@@ -189,11 +199,25 @@ export default function AnalysisDetailPage() {
       {/* Processing banner */}
       {isProcessing && !pollTimedOut && (
         <div className="rounded-lg bg-warning/10 border border-warning/20 p-4">
-          <div className="flex items-center gap-3">
-            <Loader2 className="w-5 h-5 text-warning animate-spin shrink-0" />
-            <div className="text-sm text-warning-foreground">
-              Analysis is still running. This page will update automatically when complete.
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 text-warning animate-spin shrink-0" />
+              <div className="text-sm text-warning-foreground">
+                Analysis is running — this page updates automatically.
+                {elapsedSeconds >= 40 && (
+                  <span className="block text-xs text-warning-foreground/70 mt-0.5">
+                    If RunPod utilization is 0%, the model stopped. The UI will update within ~30s of that.
+                  </span>
+                )}
+              </div>
             </div>
+            {elapsedSeconds > 0 && (
+              <span className="text-xs font-mono text-warning-foreground/60 shrink-0">
+                {Math.floor(elapsedSeconds / 60) > 0
+                  ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
+                  : `${elapsedSeconds}s`}
+              </span>
+            )}
           </div>
         </div>
       )}

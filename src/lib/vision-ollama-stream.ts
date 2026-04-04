@@ -320,8 +320,8 @@ export async function collectOllamaVisionChat(
 
   // Inactivity watchdog: if the proxy silently drops the connection (no RST, no close),
   // reader.read() blocks forever. Reset this timer on every received token.
-  // 90s with no tokens = treat as dead connection and move on.
-  const INACTIVITY_MS = 90_000;
+  // 30s with no tokens = treat as dead connection (RunPod may have stopped).
+  const INACTIVITY_MS = 30_000;
   let inactivityTimer = setTimeout(() => {
     streamInactive = true;
     void reader.cancel();
@@ -394,8 +394,18 @@ export async function collectOllamaVisionChat(
   }
 
   if (streamInactive) {
-    console.warn(`[vision-ollama] Inactivity timeout (${INACTIVITY_MS / 1000}s) — proxy dropped connection. Attempting JSON extraction from partial content.`);
-    // Don't throw — attempt to extract whatever we have from thinking block.
+    if (fullContent.length === 0 && thinkContent.length === 0) {
+      // No tokens received at all — model is completely dead (RunPod stopped)
+      throw new Error(
+        `Vision model stopped responding — no tokens received for ${INACTIVITY_MS / 1000}s. ` +
+        `RunPod may have stopped. Check RunPod utilization and restart if needed.`,
+      );
+    }
+    // Partial tokens received before stop — try to extract JSON from whatever we have
+    console.warn(
+      `[vision-ollama] Inactivity timeout (${INACTIVITY_MS / 1000}s) — attempting JSON extraction from partial content ` +
+      `(fullContent=${fullContent.length}, thinking=${thinkContent.length})`,
+    );
   }
 
   if (streamError) {
