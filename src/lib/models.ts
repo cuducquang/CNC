@@ -27,25 +27,17 @@ export interface ModelDefinition {
 
 export const AGENT_MODELS: ModelDefinition[] = [
   {
-    id:          "qwen3-vl:4b",
-    name:        "Qwen3-VL 4B — Thinking",
-    params:      "4B",
-    description: "Recommended. Thinking mode — streams reasoning live while reading the drawing.",
+    id:          "qwen3-vl:8b",
+    name:        "Qwen3-VL 8B",
+    params:      "8B",
+    description: "High-quality vision model for dense engineering drawings.",
     baseUrl:     "http://localhost:11434",
     baseUrlEnv:  "LOCAL_OLLAMA_URL",
     isDefault:   true,
   },
-  {
-    id:          "qwen3-vl-nothink:4b",
-    name:        "Qwen3-VL 4B — Fast",
-    params:      "4B",
-    description: "No thinking mode — writes JSON directly. Faster, no live reasoning stream.",
-    baseUrl:     "http://localhost:11434",
-    baseUrlEnv:  "LOCAL_OLLAMA_URL",
-  },
 ];
 
-export const DEFAULT_MODEL_ID = "qwen3-vl:4b";
+export const DEFAULT_MODEL_ID = "qwen3-vl:8b";
 
 export function getModelById(id: string): ModelDefinition | undefined {
   return AGENT_MODELS.find((m) => m.id === id);

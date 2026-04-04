@@ -105,7 +105,101 @@ function extractJsonFromThinking(thinking: string): string {
     try { JSON.parse(jsonStr); return jsonStr; } catch { /* keep looking */ }
   }
 
+  // No JSON found anywhere. Check whether the thinking concluded non-technical/no-dimensions.
+  // qwen3-vl 8B sometimes reasons in English about why a page has no drawing content and then
+  // stops without writing the canonical JSON. Detect these conclusions and synthesize the JSON
+  // so the page is classified as soft_skip rather than unparseable.
+  const lower = thinking.toLowerCase();
+  const isNonTechnical =
+    lower.includes("non_technical_page") ||
+    lower.includes("non-technical") ||
+    lower.includes("not a drawing") ||
+    lower.includes("not an engineering drawing") ||
+    (lower.includes("no dimension") && lower.includes("title")) ||
+    (lower.includes("no visible dimension") || lower.includes("no dimension line"));
+  if (isNonTechnical) {
+    console.log("[vision-ollama] thinking concluded non-technical — synthesizing canonical JSON");
+    return '{"dimensions":[],"gdt":[],"threads":[],"material":null,"surface_finish":null,"notes":["non_technical_page"]}';
+  }
+
   return thinking; // nothing found — pass raw content to parser (will be unparseable)
+}
+
+/**
+ * Text-only second pass: send the thinking content as context and ask the model
+ * to output the JSON extraction. Used when the first vision call produced thinking
+ * but no JSON content. This call is fast (no image) and uses temperature=0.
+ */
+async function collectJsonFromThinking(
+  thinkContent: string,
+  baseUrl: string,
+  model: string,
+): Promise<string> {
+  // Truncate thinking to last 6000 chars — the conclusion is most relevant.
+  const context = thinkContent.length > 6000 ? thinkContent.slice(-6000) : thinkContent;
+
+  const payload = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content: "You are a JSON formatter. Given an engineer's analysis of a 2D drawing, output ONLY the valid JSON object. No explanation, no markdown.",
+      },
+      {
+        role: "user",
+        content: `Engineering drawing analysis:\n\n${context}\n\nConvert to JSON using this schema (dimensions in original drawing units, depth_mm in mm):\n{"dimensions":[{"id":"D001","label":"short description","nominal":0,"unit":"in or mm","tolerance_plus":null,"tolerance_minus":null,"quantity":1}],"gdt":[],"threads":[{"id":"T001","spec":"e.g. 1/4-20 UNC","depth_mm":null,"quantity":1}],"material":null,"surface_finish":null,"notes":[]}\n\nIf no dimensions: {"dimensions":[],"gdt":[],"threads":[],"material":null,"surface_finish":null,"notes":["non_technical_page"]}`,
+      },
+      // Prefix-forcing: guarantee the model writes JSON content (not just thinking).
+      { role: "assistant", content: "{" },
+    ],
+    think:  false,
+    stream: true,
+    options: { temperature: 0, num_predict: 3000 },
+  };
+
+  const candidateUrls = buildCandidateBaseUrls(baseUrl);
+  let response: Response | undefined;
+  for (const url of candidateUrls) {
+    try {
+      response = await fetch(`${url}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      break;
+    } catch { /* try next */ }
+  }
+  if (!response?.ok) throw new Error(`text-only pass HTTP ${response?.status}`);
+  if (!response.body)  throw new Error("no body");
+
+  const reader  = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let out = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const raw = line.startsWith("data: ") ? line.slice(6) : line;
+      if (raw === "[DONE]") break;
+      try {
+        const chunk = JSON.parse(raw);
+        const msg = chunk.message || {};
+        if (msg.content) out += msg.content;
+        if (chunk.done)  break;
+      } catch { /* skip */ }
+    }
+    if (out.length > 10_000) break;
+  }
+  const trimmed = out.trim();
+  // Prepend the "{" prefix we injected via the assistant role message.
+  if (trimmed.length > 0 && !trimmed.startsWith("{")) return "{" + trimmed;
+  return trimmed;
 }
 
 export async function collectOllamaVisionChat(
@@ -116,8 +210,7 @@ export async function collectOllamaVisionChat(
 ): Promise<{ content: string }> {
   const visionUrl   = (overrides?.url   || process.env.LOCAL_OLLAMA_URL || "http://localhost:11434").trim();
   // Explicit override → env var → default.
-  // qwen3-vl:4b (3.3 GiB) fits 69% in the T1200's 4 GB VRAM — faster than 8b (44% GPU).
-  const visionModel = (overrides?.model || process.env.VISION_MODEL || "qwen3-vl:4b").trim();
+  const visionModel = (overrides?.model || process.env.VISION_MODEL || "qwen3-vl:8b").trim();
   const t0 = Date.now();
 
   console.log(
@@ -132,17 +225,16 @@ export async function collectOllamaVisionChat(
       { role: "system", content: systemPrompt },
       { role: "user",   content: userPrompt, images: [imageBase64] },
     ],
+    think:   false,
     stream:  true,
     options: {
-      temperature: 0.1,
+      temperature: 0.3,
+      repeat_penalty: 1.3,   // Break thinking repetition loops (model tends to loop on mm/in, tolerance debates)
       // Images are capped at 2000px longest side → ~15 tiles → ~3840 visual tokens.
       // 32768 context: 4640 prompt tokens + ~12000 thinking tokens + ~500 JSON answer = ~17140 total.
       // At 16384 the model hits context limit mid-thinking and never writes the JSON answer.
       // A4500 20 GB VRAM: 8B model ~7.5 GB weights + ~4 GB KV cache at 32768 = ~11.5 GB — fits.
       num_ctx: 32768,
-      // Hard cap on new tokens to prevent infinite thinking loops (qwen3-vl thinking mode can
-      // loop forever with sliding-window context). 8000 tokens ≈ 2 min on A4500 — enough for
-      // full extraction + JSON on a complex drawing page, with room for deep analysis.
       num_predict: 8000,
     },
   };
@@ -307,11 +399,27 @@ export async function collectOllamaVisionChat(
     throw new Error(`Vision model stream failed: ${streamError.message}`);
   }
 
-  // qwen3-vl:4b ignores think:false — its entire answer lives inside the thinking block.
+  // qwen3-vl may stream its final answer inside the thinking block.
   // Extract by searching backwards for the last {"dimensions" pattern (always present in our schema).
   if (fullContent.length === 0 && thinkContent.length > 0) {
     console.warn(`[vision-ollama] content_len=0 but thinking_len=${thinkContent.length} — extracting JSON from thinking block`);
     fullContent = extractJsonFromThinking(thinkContent);
+  }
+
+  // If extractJsonFromThinking returned raw thinking (no JSON found), try a fast second call:
+  // strip the image, send only the thinking text as context and ask for JSON directly.
+  // This text-only call is fast (~5-10s) and deterministic at temperature=0.
+  if (fullContent === thinkContent && thinkContent.length > 0) {
+    console.warn(`[vision-ollama] no JSON in thinking — attempting text-only JSON extraction pass`);
+    try {
+      const jsonExtract = await collectJsonFromThinking(thinkContent, visionUrl, visionModel);
+      if (jsonExtract.length > 0) {
+        console.log(`[vision-ollama] text-only pass produced ${jsonExtract.length} chars`);
+        fullContent = jsonExtract;
+      }
+    } catch (e) {
+      console.warn(`[vision-ollama] text-only pass failed: ${(e as Error).message}`);
+    }
   }
 
   console.log(

@@ -11,12 +11,39 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * Walk forward through `s` starting at index 0 (must be '{') to find the
+ * matching closing '}', respecting nested braces and strings.
+ * Returns -1 if no balanced close is found.
+ */
+function findMatchingBrace(s: string): number {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc)                    { esc = false; continue; }
+    if (c === "\\" && inStr)    { esc = true;  continue; }
+    if (c === '"')              { inStr = !inStr; continue; }
+    if (inStr)                  continue;
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 // System prompt — concise role only.
 export const SYSTEM_PROMPT = `You are a metrology specialist reading a 2D engineering drawing. \
 Extract dimensions, tolerances, GD&T callouts, and thread specifications. \
 Output JSON only.`;
 
-export const EXTRACTION_PROMPT = `TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page. Write the complete JSON answer NOW — before any verification or analysis. Output JSON first, then check if needed.
+export const EXTRACTION_PROMPT = `TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page.
+
+Rules:
+- Do NOT loop or second-guess yourself. Identify each dimension ONCE and move on immediately.
+- If a tolerance value is not clearly visible, set it to null — do not speculate.
+- After identifying all content, write the JSON ONCE as your final output. Do not revise it.
+- The LAST thing you output MUST be the complete JSON object.
 
 If this page is ONLY a company logo, blank page, or pure title/cover with zero drawing geometry (no dimension lines, no feature callouts, no measurement values anywhere on the page):
 {"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}
@@ -34,7 +61,7 @@ If it IS an engineering drawing (or mixed page with drawing content), extract th
       "id": "D001",
       "label": "short description e.g. 'Hole diameter', 'Overall length', 'Pocket depth'",
       "nominal": 12.5,
-      "unit": "mm",
+      "unit": "in or mm — match what is on the drawing",
       "tolerance_plus": 0.02,
       "tolerance_minus": 0.02,
       "quantity": 1
@@ -65,14 +92,17 @@ If it IS an engineering drawing (or mixed page with drawing content), extract th
 Rules:
 - Extract ONLY what is explicitly labeled on the drawing. Do not infer or guess.
 - For bilateral tolerance ±X: tolerance_plus = X, tolerance_minus = X.
+- For unilateral tolerance +A/-B: tolerance_plus = A, tolerance_minus = B. Zero IS valid: "+0.000/-0.005" means tolerance_plus=0.0, tolerance_minus=0.005. Accept it and move on — do NOT debate whether "0.000" means "no tolerance."
 - If no tolerance callout exists for a dimension, omit tolerance_plus and tolerance_minus.
 - If no GD&T frame control symbols are visible, return empty gdt array.
+- THREAD depth_mm: always store in mm. If the drawing shows depth in inches, multiply by 25.4 (e.g., 1.90 in → 48.26 mm). If depth is not shown, omit the depth_mm field entirely. Record and move on — no unit debate.
 - RADIUS vs THREAD: "R" prefix always means RADIUS (e.g., R2.340, R4.50, 4X R4.50, 3X R2.340 are all radius dimensions). Never classify an R-prefixed value as a thread. Threads always include a pitch and standard callout: M8x1.25, 1/4-20 UNC, 3/8 NPT, TAP, THRU, etc.
 - REFERENCE DIMENSIONS: Values in parentheses () are reference (non-toleranced) dimensions. "2X 18.215 (17.362)" means 2 features, nominal 18.215, reference 17.362 — it is a hole/feature dimension, NOT a thread.
 - BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). The "DIMENSIONS" column in a BOM table contains part numbers, not engineering measurements. Skip BOM table entries entirely.
 - DEDUPLICATION: If the same nominal value appears multiple times (e.g., R3.264 appears in 8 places), create ONE entry with quantity=8. Do NOT list it multiple times. Each unique nominal value gets exactly one JSON entry.
 - ONE PASS ONLY: Scan the drawing once. Record each unique dimension once (with quantity). Do not re-examine, re-list, or re-verify values. Write the JSON immediately after your single pass.
 - The "notes" field must always be [] (empty array) for a drawing page. Do NOT put engineering text notes in this field.
+- STOP RULE: The moment you catch yourself writing "wait", "no,", "actually", or re-reading a value you already recorded — stop immediately and write the JSON. Do not revise any previously noted value.
 - Return JSON only. No explanations.`;
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
@@ -84,11 +114,22 @@ export function parseModelJson(rawText: string): Record<string, unknown> {
     cleaned = cleaned.slice(0, cleaned.lastIndexOf("```"));
   }
   cleaned = cleaned.trim().replace(/`+$/, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return { raw_model_output: rawText, dimensions: [], gdt: [], threads: [] };
+  // Direct parse — works when model outputs pure JSON
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+  // Model may prefix JSON with explanation text, or append trailing text after the JSON.
+  // Use findMatchingBrace to extract just the balanced JSON object.
+  const braceIdx = cleaned.indexOf("{");
+  if (braceIdx !== -1) {
+    // First try simple slice (fast path — handles prefix text with clean trailing JSON)
+    try { return JSON.parse(cleaned.slice(braceIdx)); } catch { /* fall through */ }
+    // Robust path: find the matching closing brace, ignoring any trailing text
+    const fromBrace = cleaned.slice(braceIdx);
+    const closeIdx  = findMatchingBrace(fromBrace);
+    if (closeIdx !== -1) {
+      try { return JSON.parse(fromBrace.slice(0, closeIdx + 1)); } catch { /* fall through */ }
+    }
   }
+  return { raw_model_output: rawText, dimensions: [], gdt: [], threads: [] };
 }
 
 function isHardRejectNotes(notes: string[]): boolean {

@@ -27,7 +27,6 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { AGENT_MODELS, DEFAULT_MODEL_ID } from "@/lib/models";
 
 // ---------------------------------------------------------------------------
 // SSE parser
@@ -82,7 +81,6 @@ export default function HomePage() {
   const router = useRouter();
   const [file3d, setFile3d] = useState<File | null>(null);
   const [file2d, setFile2d] = useState<File | null>(null);
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,7 +158,7 @@ export default function HomePage() {
       const resp = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysis_id: uploadResult.analysis_id, model: selectedModel }),
+        body: JSON.stringify({ analysis_id: uploadResult.analysis_id }),
         signal: controller.signal,
       });
 
@@ -407,22 +405,6 @@ export default function HomePage() {
                 icon="2d"
                 required
               />
-            </div>
-
-            {/* Model selector */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Agent Model</label>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {AGENT_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} — {m.description}
-                  </option>
-                ))}
-              </select>
             </div>
 
             {error && (

@@ -32,7 +32,7 @@ export function getAgentConfig(agentModelOverride?: string, agentUrlOverride?: s
   const modelName = (
     agentModelOverride ||
     (getModelById(envModelName) ? envModelName : "") ||
-    "qwen3-vl:4b"
+    "qwen3-vl:8b"
   ).trim();
 
   return {

@@ -85,42 +85,55 @@ export async function analyzeDrawing(
   const outcomes: PageOutcome[] = [];
 
   // Process every page one at a time — never concurrent on small models.
+  // Retry once on unparseable: qwen3-vl 8B at temperature 0.3 occasionally generates only
+  // thinking tokens with no content output. A single retry is usually enough to get content.
+  const MAX_RETRIES = 1;
+
   for (let i = 0; i < pages.length; i++) {
-    const pageStart = Date.now();
-    console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} — sending to vision model...`);
+    let parsed: Record<string, unknown> = { features: [], gdt: [], material: null, notes: [], raw_model_output: "" };
+    let outcome: PageOutcome = "unparseable";
 
-    let parsed: Record<string, unknown>;
-    let outcome: PageOutcome;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const pageStart = Date.now();
+      const attemptLabel = attempt === 0 ? "" : ` (retry ${attempt})`;
+      console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length}${attemptLabel} — sending to vision model...`);
 
-    try {
-      const { content } = await collectOllamaVisionChat(
-        pages[i],
-        SYSTEM_PROMPT,
-        EXTRACTION_PROMPT,
-        {
-          url:        context.visionModelUrl,
-          model:      context.visionModelName,
-          onThinking: context.onThinking,
-        },
-      );
-      const elapsed = Date.now() - pageStart;
-      console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length} responded in ${elapsed}ms`);
+      try {
+        const { content } = await collectOllamaVisionChat(
+          pages[i],
+          SYSTEM_PROMPT,
+          EXTRACTION_PROMPT,
+          {
+            url:        context.visionModelUrl,
+            model:      context.visionModelName,
+            onThinking: context.onThinking,
+          },
+        );
+        const elapsed = Date.now() - pageStart;
+        console.log(`[Tool:analyze_drawing] Page ${i + 1}/${pages.length}${attemptLabel} responded in ${elapsed}ms`);
 
-      if (!content.trim()) {
-        console.warn(`[Tool:analyze_drawing] Page ${i + 1} returned empty response — skipping.`);
-        parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
+        if (!content.trim()) {
+          console.warn(`[Tool:analyze_drawing] Page ${i + 1}${attemptLabel} returned empty response.`);
+          parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
+          outcome = "unparseable";
+        } else {
+          parsed  = parseModelJson(content);
+          outcome = classifyPageParsed(parsed);
+          const featureCount = ((parsed.dimensions as any[]) || []).length + ((parsed.threads as any[]) || []).length;
+          console.log(`[Tool:analyze_drawing] Page ${i + 1}${attemptLabel} classified as "${outcome}" — ${featureCount} feature(s).`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[Tool:analyze_drawing] Page ${i + 1}${attemptLabel} error: ${msg}`);
+        parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
         outcome = "unparseable";
-      } else {
-        parsed  = parseModelJson(content);
-        outcome = classifyPageParsed(parsed);
-        const featureCount = ((parsed.dimensions as any[]) || []).length + ((parsed.threads as any[]) || []).length;
-        console.log(`[Tool:analyze_drawing] Page ${i + 1} classified as "${outcome}" — ${featureCount} feature(s).`);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[Tool:analyze_drawing] Page ${i + 1} error: ${msg} — skipping.`);
-      parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
-      outcome = "unparseable";
+
+      // Stop retrying once we have a definitive result.
+      if (outcome !== "unparseable") break;
+      if (attempt < MAX_RETRIES) {
+        console.log(`[Tool:analyze_drawing] Page ${i + 1} unparseable — retrying...`);
+      }
     }
 
     parsedPerPage.push(parsed);
