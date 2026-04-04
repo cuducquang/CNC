@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error, count } = await supabase
       .from("analyses")
-      .select("id, file_name, file_3d_path, file_2d_path, status, created_at, cycle_time, cost_estimation", {
+      .select("id, file_name, file_3d_path, file_2d_path, status, error_message, created_at, cycle_time, cost_estimation", {
         count: "exact",
       })
       .order("created_at", { ascending: false })

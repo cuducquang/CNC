@@ -91,6 +91,34 @@ export async function GET(
 }
 
 // ---------------------------------------------------------------------------
+// PATCH — update status (used by UI to mark stuck records as error)
+// ---------------------------------------------------------------------------
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: RouteContext,
+): Promise<NextResponse> {
+  const { id } = await params;
+  const body = await req.json().catch(() => ({}));
+
+  const allowed = ["error", "completed"];
+  if (!allowed.includes(body.status)) {
+    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from("analyses")
+    .update({ status: body.status, error_message: body.error_message ?? null })
+    .eq("id", id);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ updated: true, id, status: body.status });
+}
+
+// ---------------------------------------------------------------------------
 // DELETE — remove analysis record + its uploaded files from storage
 // ---------------------------------------------------------------------------
 

@@ -24,8 +24,8 @@ const STATUS_BADGE: Record<string, { variant: "success" | "destructive" | "warni
   pending: { variant: "secondary", label: "Pending" },
 };
 
-const POLL_INTERVAL_MS = 2500;
-const POLL_MAX_ATTEMPTS = 24; // ~60 seconds
+const POLL_INTERVAL_MS = 3000;
+const POLL_MAX_ATTEMPTS = 100; // ~5 minutes — matches Vercel 300s function timeout
 
 export default function AnalysisDetailPage() {
   const params = useParams();
@@ -35,6 +35,7 @@ export default function AnalysisDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCount = useRef(0);
@@ -92,9 +93,10 @@ export default function AnalysisDetailPage() {
     pollRef.current = setInterval(async () => {
       pollCount.current += 1;
 
-      // Stop after max attempts
+      // Stop after max attempts — show "may be stuck" banner
       if (pollCount.current >= POLL_MAX_ATTEMPTS) {
         stopPolling();
+        setPollTimedOut(true);
         return;
       }
 
@@ -185,13 +187,33 @@ export default function AnalysisDetailPage() {
       </div>
 
       {/* Processing banner */}
-      {isProcessing && (
+      {isProcessing && !pollTimedOut && (
         <div className="rounded-lg bg-warning/10 border border-warning/20 p-4">
           <div className="flex items-center gap-3">
             <Loader2 className="w-5 h-5 text-warning animate-spin shrink-0" />
             <div className="text-sm text-warning-foreground">
               Analysis is still running. This page will update automatically when complete.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Polling timed out banner */}
+      {isProcessing && pollTimedOut && (
+        <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="text-sm font-medium text-destructive">Analysis may be stuck</div>
+              <div className="text-sm text-destructive/80 mt-1">
+                The job is taking longer than expected and may have timed out. Check the History page and mark it as failed if it&apos;s no longer running.
+              </div>
+            </div>
+            <Link href="/history">
+              <Button variant="outline" size="sm" className="shrink-0">
+                Go to History
+              </Button>
+            </Link>
           </div>
         </div>
       )}
