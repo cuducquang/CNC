@@ -135,11 +135,18 @@ async function collectJsonFromThinking(
   baseUrl: string,
   model: string,
 ): Promise<string> {
-  // Use the FIRST 8000 chars — the model does its actual analysis at the start,
-  // then loops at the end. extractJsonFromThinking already handles JSON found at the
-  // end of thinking; this fallback only runs when no JSON was found anywhere, so the
-  // initial analysis pass (always at the beginning) is the right context to use.
-  const context = thinkContent.length > 8000 ? thinkContent.slice(0, 8000) : thinkContent;
+  // The model's thinking often has multiple attempts separated by <think> tags.
+  // Phase 1 is typically a failed loop (BOM confusion, deduplication debate, etc.).
+  // Phase 2 (after the last <think> tag) is the model's most current analysis — the
+  // one that actually lists real dimension values from the drawing.
+  // Take the content from the LAST <think> marker; if none, use everything.
+  const lastThinkIdx = thinkContent.lastIndexOf("<think>");
+  const freshStart = lastThinkIdx !== -1
+    ? thinkContent.slice(lastThinkIdx + 7)  // skip past '<think>'
+    : thinkContent;
+  // Limit to 8000 chars of that fresh start — the actual dimension listing is
+  // at the beginning of it; the repetition loop is at the end.
+  const context = freshStart.length > 8000 ? freshStart.slice(0, 8000) : freshStart;
 
   const payload = {
     model,
