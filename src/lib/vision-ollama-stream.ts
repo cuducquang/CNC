@@ -135,8 +135,11 @@ async function collectJsonFromThinking(
   baseUrl: string,
   model: string,
 ): Promise<string> {
-  // Truncate thinking to last 6000 chars — the conclusion is most relevant.
-  const context = thinkContent.length > 6000 ? thinkContent.slice(-6000) : thinkContent;
+  // Use the FIRST 8000 chars — the model does its actual analysis at the start,
+  // then loops at the end. extractJsonFromThinking already handles JSON found at the
+  // end of thinking; this fallback only runs when no JSON was found anywhere, so the
+  // initial analysis pass (always at the beginning) is the right context to use.
+  const context = thinkContent.length > 8000 ? thinkContent.slice(0, 8000) : thinkContent;
 
   const payload = {
     model,
