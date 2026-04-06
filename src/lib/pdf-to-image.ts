@@ -204,11 +204,13 @@ export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string
   }
 
   const onVercel = process.env.VERCEL === "1";
-  // On Vercel, the thinking model (Qwen3-VL-32B) uses ~30-60s per page.
-  // Hard-cap at 4 pages to stay within the 300s function timeout.
-  // Locally/Docker there is no such constraint.
+  // Pages are now processed in PARALLEL (see analyze-drawing.ts).
+  // vLLM continuous batching means 9 concurrent pages finish in ~150-200s
+  // — well within the 300s Vercel Hobby limit.
+  // Each page still has a 60s individual timeout (VISION_TIMEOUT_MS) as a
+  // safety net for any single runaway page.
   const maxPages = onVercel
-    ? Math.min(maxPdfPages(), 4)
+    ? Math.min(maxPdfPages(), 9)
     : maxPdfPages();
 
   if (!onVercel) {

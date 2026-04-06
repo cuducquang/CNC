@@ -9,12 +9,22 @@
  *     The Qwen3-VL-32B-Thinking model exhausts its entire token budget on thinking
  *     when given multiple images, never producing JSON. Per-page calls keep the
  *     thinking chain short enough to complete within max_tokens.
+ *
+ *   - Pages are processed IN PARALLEL (Promise.all).
+ *     vLLM continuous batching means N concurrent requests take ~1.5–2.5× a single
+ *     page, NOT N× a single page. On Vercel (300s limit) 9 pages in parallel finish
+ *     in ~150-200s vs. 810s sequentially. The 96GB VRAM on the current pod handles
+ *     concurrent vision sequences without memory pressure.
+ *
  *   - Each page result is classified:
  *       "ok"          → has features — included in merged result
  *       "soft_skip"   → cover sheet / title block / blank
  *       "hard_reject" → clearly not a drawing (photo, logo)
  *       "unparseable" → model timed out or returned garbage — retried once
  *   - Results from ALL "ok" batches are merged (features + GD&T + material).
+ *
+ *   - onThinking is only forwarded for page 1. Parallel pages run silently to
+ *     avoid interleaved thinking chunks confusing the live UI stream.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -83,10 +93,10 @@ export async function analyzeDrawing(
   }
 
   // ── Batch strategy ────────────────────────────────────────────────────────
-  // Send up to BATCH_SIZE images in one vLLM call.
-  // With 64k context + 96GB VRAM, 4 images fit comfortably in a single request,
-  // reducing a 4-page PDF from 4 sequential calls to 1.
-  const BATCH_SIZE = 1;
+  // BATCH_SIZE=1: one page per vLLM call (multi-image calls exhaust the token
+  // budget on thinking and never produce JSON).
+  // MAX_RETRIES=1: retry once on unparseable results.
+  const BATCH_SIZE  = 1;
   const MAX_RETRIES = 1;
 
   const batches: string[][] = [];
@@ -95,68 +105,76 @@ export async function analyzeDrawing(
   }
 
   console.log(
-    `[Tool:analyze_drawing] ${pages.length} page(s) → ${batches.length} batch(es) of up to ${BATCH_SIZE} images each`,
+    `[Tool:analyze_drawing] ${pages.length} page(s) → ${batches.length} batch(es) processed in parallel`,
   );
 
-  const parsedPerBatch: Record<string, unknown>[] = [];
-  const outcomes: PageOutcome[] = [];
+  // ── Parallel page processing ───────────────────────────────────────────────
+  // All pages are dispatched concurrently. vLLM continuous batching (PagedAttention)
+  // processes them together — total time ≈ 1.5–2.5× a single page, not N× a page.
+  // onThinking is only forwarded for batch 0 (the first page) to avoid sending
+  // interleaved thinking chunks from multiple parallel calls to the UI stream.
+  const results = await Promise.all(
+    batches.map(async (batch, b) => {
+      const isMulti   = batch.length > 1;
+      const prompt    = isMulti ? buildMultiPagePrompt(batch.length) : EXTRACTION_PROMPT;
+      const pageRange = batches.length === 1
+        ? `${pages.length} page(s)`
+        : `batch ${b + 1}/${batches.length} (page ${b * BATCH_SIZE + 1})`;
 
-  for (let b = 0; b < batches.length; b++) {
-    const batch  = batches[b];
-    const isMulti = batch.length > 1;
-    const prompt  = isMulti ? buildMultiPagePrompt(batch.length) : EXTRACTION_PROMPT;
-    const pageRange = batches.length === 1
-      ? `${pages.length} page(s)`
-      : `batch ${b + 1}/${batches.length} (pages ${b * BATCH_SIZE + 1}–${Math.min((b + 1) * BATCH_SIZE, pages.length)})`;
+      // Only the first batch streams thinking to the UI; others run silently.
+      const onThinking = b === 0 ? context.onThinking : undefined;
 
-    let parsed: Record<string, unknown> = { features: [], gdt: [], material: null, notes: [], raw_model_output: "" };
-    let outcome: PageOutcome = "unparseable";
+      let parsed: Record<string, unknown> = { features: [], gdt: [], material: null, notes: [], raw_model_output: "" };
+      let outcome: PageOutcome = "unparseable";
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const batchStart   = Date.now();
-      const attemptLabel = attempt === 0 ? "" : ` (retry ${attempt})`;
-      console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} — sending ${batch.length} image(s) to vision model...`);
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const batchStart   = Date.now();
+        const attemptLabel = attempt === 0 ? "" : ` (retry ${attempt})`;
+        console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} — sending to vision model (parallel)...`);
 
-      try {
-        const { content } = await collectOllamaVisionChat(
-          batch.length === 1 ? batch[0] : batch,
-          SYSTEM_PROMPT,
-          prompt,
-          {
-            url:        context.visionModelUrl,
-            model:      context.visionModelName,
-            onThinking: context.onThinking,
-          },
-        );
-        const elapsed = Date.now() - batchStart;
-        console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} responded in ${elapsed}ms`);
+        try {
+          const { content } = await collectOllamaVisionChat(
+            batch.length === 1 ? batch[0] : batch,
+            SYSTEM_PROMPT,
+            prompt,
+            {
+              url:        context.visionModelUrl,
+              model:      context.visionModelName,
+              onThinking,
+            },
+          );
+          const elapsed = Date.now() - batchStart;
+          console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} responded in ${elapsed}ms`);
 
-        if (!content.trim()) {
-          console.warn(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} returned empty response.`);
-          parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
+          if (!content.trim()) {
+            console.warn(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} returned empty response.`);
+            parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: "(empty response)" };
+            outcome = "unparseable";
+          } else {
+            parsed  = parseModelJson(content);
+            outcome = classifyPageParsed(parsed);
+            const featureCount = ((parsed.dimensions as any[]) || []).length + ((parsed.threads as any[]) || []).length;
+            console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} classified as "${outcome}" — ${featureCount} feature(s).`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} error: ${msg}`);
+          parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
           outcome = "unparseable";
-        } else {
-          parsed  = parseModelJson(content);
-          outcome = classifyPageParsed(parsed);
-          const featureCount = ((parsed.dimensions as any[]) || []).length + ((parsed.threads as any[]) || []).length;
-          console.log(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} classified as "${outcome}" — ${featureCount} feature(s).`);
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Tool:analyze_drawing] ${pageRange}${attemptLabel} error: ${msg}`);
-        parsed  = { features: [], gdt: [], material: null, notes: [], raw_model_output: msg };
-        outcome = "unparseable";
+
+        if (outcome !== "unparseable") break;
+        if (attempt < MAX_RETRIES) {
+          console.log(`[Tool:analyze_drawing] ${pageRange} retrying...`);
+        }
       }
 
-      if (outcome !== "unparseable") break;
-      if (attempt < MAX_RETRIES) {
-        console.log(`[Tool:analyze_drawing] ${pageRange} error — retrying...`);
-      }
-    }
+      return { parsed, outcome };
+    }),
+  );
 
-    parsedPerBatch.push(parsed);
-    outcomes.push(outcome);
-  }
+  const parsedPerBatch = results.map((r) => r.parsed);
+  const outcomes       = results.map((r) => r.outcome) as PageOutcome[];
 
   // Merge results from all batches that returned features.
   const okParsed = parsedPerBatch.filter((_, i) => outcomes[i] === "ok");
