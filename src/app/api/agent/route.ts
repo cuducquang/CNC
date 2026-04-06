@@ -14,7 +14,10 @@
 
 // Allow up to 5 minutes for the agent SSE stream on Vercel Pro.
 // Hobby plan is capped at 60 s — upgrade to Pro for demo deployments.
-export const maxDuration = 300;
+// 10 minutes — the thinking model needs ~30-60s per PDF page; a 9-page drawing
+// with 1 retry per page can take up to 9 min on a loaded GPU. Vercel Pro allows
+// up to 800s; we use 600 to stay comfortable.
+export const maxDuration = 600;
 
 import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
