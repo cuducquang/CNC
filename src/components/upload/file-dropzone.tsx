@@ -3,9 +3,8 @@
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
 import { cn } from "@/lib/utils";
-import { Upload, FileBox, FileImage, X } from "lucide-react";
+import { Upload, FileBox, FileImage, X, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 
 interface FileDropzoneProps {
   label: string;
@@ -17,7 +16,7 @@ interface FileDropzoneProps {
   required?: boolean;
 }
 
-export function FileDropzone({ label, description, accept, file, onFileSelect, icon, required }: FileDropzoneProps) {
+export function FileDropzone({ label, description, accept, file, onFileSelect, icon }: FileDropzoneProps) {
   const onDrop = useCallback(
     (accepted: File[]) => {
       if (accepted.length > 0) onFileSelect(accepted[0]);
@@ -35,20 +34,22 @@ export function FileDropzone({ label, description, accept, file, onFileSelect, i
 
   if (file) {
     return (
-      <div className="relative flex items-center gap-3 rounded-xl border-2 border-primary/20 bg-primary/5 p-4">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
-          <Icon className="w-5 h-5 text-primary" />
+      <div className="relative flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 p-3.5">
+        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/15 shrink-0">
+          <CheckCircle2 className="w-4 h-4 text-primary" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{file.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {(file.size / 1024).toFixed(1)} KB
+          <div className="text-sm font-medium truncate text-foreground">{file.name}</div>
+          <div className="text-[11px] text-muted-foreground font-mono mt-0.5">
+            {file.size > 1024 * 1024
+              ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
+              : `${(file.size / 1024).toFixed(1)} KB`}
           </div>
         </div>
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={(e) => {
             e.stopPropagation();
             onFileSelect(null);
@@ -64,33 +65,25 @@ export function FileDropzone({ label, description, accept, file, onFileSelect, i
     <div
       {...getRootProps()}
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 cursor-pointer transition-all",
+        "flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 cursor-pointer transition-all bg-card",
         isDragActive
-          ? "border-primary bg-primary/5"
-          : "border-muted-foreground/20 hover:border-primary/40 hover:bg-muted/50"
+          ? "border-primary/60 bg-primary/8"
+          : "border-border hover:border-primary/40 hover:bg-muted/20"
       )}
     >
       <input {...getInputProps()} />
       <div className={cn(
         "flex items-center justify-center w-10 h-10 rounded-lg transition-colors",
-        isDragActive ? "bg-primary/10" : "bg-muted"
+        isDragActive ? "bg-primary/15" : "bg-muted"
       )}>
-        {isDragActive ? (
-          <Upload className="w-5 h-5 text-primary" />
-        ) : (
-          <Icon className="w-5 h-5 text-muted-foreground" />
-        )}
+        {isDragActive
+          ? <Upload className="w-4 h-4 text-primary" />
+          : <Icon className="w-4 h-4 text-muted-foreground/60" />
+        }
       </div>
       <div className="text-center">
-        <div className="flex items-center justify-center gap-1.5">
-          <span className="text-sm font-medium">{label}</span>
-          {required && (
-            <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4 leading-none">
-              Required
-            </Badge>
-          )}
-        </div>
-        <div className="text-xs text-muted-foreground mt-0.5">{description}</div>
+        <div className="text-[13px] font-medium text-foreground/80">{label}</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5">{description}</div>
       </div>
     </div>
   );

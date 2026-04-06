@@ -44,7 +44,7 @@ export function AgentStream({ messages, liveThinking, isStreaming }: AgentStream
         {liveThinking && <ThinkingPanel content={liveThinking} isLive label="Vision Analysis — Reading Drawing" />}
 
         {isStreaming && !liveThinking && messages.length > 0 && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground/60 py-2">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span>Agent is processing...</span>
           </div>
@@ -62,13 +62,13 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
   switch (type) {
     case "agent_start":
       return (
-        <div className="flex items-start gap-3 rounded-lg bg-primary/5 border border-primary/10 p-3">
-          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary/10 mt-0.5">
+        <div className="flex items-start gap-3 rounded-lg bg-primary/8 border border-primary/20 p-3">
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/15 mt-0.5 shrink-0">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium">Agentic Analysis Started</div>
-            <div className="text-xs text-muted-foreground mt-0.5">
+            <div className="text-[13px] font-semibold text-primary/90">Agentic Analysis Started</div>
+            <div className="text-[11px] text-primary/50 mt-0.5">
               {data.message as string}
             </div>
           </div>
@@ -82,12 +82,12 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
           {d.failed ? (
             <XCircle className="w-3.5 h-3.5 text-destructive" />
           ) : d.completed ? (
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           ) : (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
           )}
-          <span className="font-medium text-foreground">{d.title}</span>
-          <span className="text-muted-foreground">{d.message}</span>
+          <span className="font-medium text-foreground/80">{d.title}</span>
+          <span className="text-muted-foreground/60">{d.message}</span>
         </div>
       );
     }
@@ -116,11 +116,11 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
 
     case "agent_message":
       return (
-        <div className="flex items-start gap-3 rounded-lg bg-card border p-3">
-          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-primary/10 mt-0.5">
-            <Bot className="w-3.5 h-3.5 text-primary" />
+        <div className="flex items-start gap-3 rounded-lg bg-card border border-border p-3">
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-muted mt-0.5 shrink-0">
+            <Bot className="w-3.5 h-3.5 text-muted-foreground" />
           </div>
-          <div className="flex-1 min-w-0 text-sm whitespace-pre-wrap">
+          <div className="flex-1 min-w-0 text-[13px] text-muted-foreground whitespace-pre-wrap leading-relaxed">
             {data.content as string}
           </div>
         </div>
@@ -129,21 +129,25 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
     case "final_answer": {
       const results = data.results as Record<string, unknown>;
       return (
-        <div className="flex items-start gap-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-4">
-          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500/10 mt-0.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+        <div className="flex items-start gap-3 rounded-lg bg-emerald-500/8 border border-emerald-500/25 p-4">
+          <div className="flex items-center justify-center w-7 h-7 rounded-md bg-emerald-500/15 mt-0.5 shrink-0">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm font-semibold text-emerald-700">Analysis Complete</span>
-              <Badge variant="success" className="text-[10px]">
-                {(results?.total_minutes as number)?.toFixed(1)} min
-              </Badge>
-              <Badge variant="info" className="text-[10px]">
-                USD {(results?.total_usd as number)?.toFixed(2)}
-              </Badge>
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className="text-[13px] font-semibold text-emerald-400">Analysis Complete</span>
+              {(results?.total_minutes as number) > 0 && (
+                <Badge variant="success" className="text-[10px] font-mono">
+                  {(results.total_minutes as number).toFixed(1)} min
+                </Badge>
+              )}
+              {(results?.total_usd as number) > 0 && (
+                <Badge variant="info" className="text-[10px] font-mono">
+                  ${(results.total_usd as number).toFixed(2)}
+                </Badge>
+              )}
             </div>
-            <div className="text-sm text-muted-foreground whitespace-pre-wrap">
+            <div className="text-[12px] text-emerald-400/60 whitespace-pre-wrap leading-relaxed">
               {data.summary as string}
             </div>
           </div>
@@ -154,19 +158,19 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
     case "done": {
       const d = data as { total_minutes: number; total_usd: number; elapsed_seconds: number };
       return (
-        <div className="flex items-center justify-center gap-4 py-3 text-sm text-muted-foreground border-t mt-2">
-          <span>Completed in {d.elapsed_seconds}s</span>
-          <span className="text-foreground font-medium">{d.total_minutes} min</span>
-          <span className="text-foreground font-medium">USD {d.total_usd}</span>
+        <div className="flex items-center justify-center gap-3 border-t border-border mt-1 py-2.5 font-mono text-[11px] text-muted-foreground/60">
+          <span>{d.elapsed_seconds}s elapsed</span>
+          {d.total_minutes > 0 && <><span className="opacity-40">·</span><span>{d.total_minutes} min</span></>}
+          {d.total_usd > 0 && <><span className="opacity-40">·</span><span>${d.total_usd}</span></>}
         </div>
       );
     }
 
     case "error":
       return (
-        <div className="flex items-start gap-3 rounded-lg bg-destructive/5 border border-destructive/20 p-3">
-          <AlertCircle className="w-4 h-4 text-destructive mt-0.5" />
-          <div className="text-sm text-destructive">
+        <div className="flex items-start gap-3 rounded-lg bg-red-500/8 border border-red-500/20 p-3">
+          <AlertCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />
+          <div className="text-[12px] text-red-400">
             {data.message as string}
           </div>
         </div>

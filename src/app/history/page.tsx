@@ -160,18 +160,19 @@ export default function HistoryPage() {
       return { variant: "destructive" as const, icon: AlertTriangle, label: "timed out" };
     }
     switch (a.status) {
-      case "completed": return { variant: "success" as const, icon: CheckCircle2, label: "completed" };
-      case "error":     return { variant: "destructive" as const, icon: AlertCircle, label: "error" };
-      case "processing": return { variant: "warning" as const, icon: Loader2, label: "processing" };
-      default:           return { variant: "secondary" as const, icon: Clock, label: a.status };
+      case "completed":  return { variant: "success" as const,     icon: CheckCircle2, label: "completed"  };
+      case "error":      return { variant: "destructive" as const,  icon: AlertCircle,  label: "error"      };
+      case "processing": return { variant: "warning" as const,      icon: Loader2,      label: "processing" };
+      default:           return { variant: "secondary" as const,    icon: Clock,        label: a.status     };
     }
   };
 
   return (
     <div className="space-y-6">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Analysis History</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">Analysis History</h1>
           <p className="text-muted-foreground text-sm mt-1">
             View and manage your previous CNC costing analyses.
           </p>
@@ -202,7 +203,7 @@ export default function HistoryPage() {
             </div>
           ) : analyses.length === 0 ? (
             <div className="py-16 text-center">
-              <FileBox className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+              <FileBox className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">No analyses yet.</p>
               <Link href="/">
                 <Button variant="outline" size="sm" className="mt-3">
@@ -213,12 +214,12 @@ export default function HistoryPage() {
           ) : (
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Files</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Cycle Time</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Date</TableHead>
+                <TableRow className="border-border hover:bg-transparent">
+                  <TableHead className="text-muted-foreground/70">Files</TableHead>
+                  <TableHead className="text-muted-foreground/70">Status</TableHead>
+                  <TableHead className="text-right text-muted-foreground/70">Cycle Time</TableHead>
+                  <TableHead className="text-right text-muted-foreground/70">Cost</TableHead>
+                  <TableHead className="text-right text-muted-foreground/70">Date</TableHead>
                   <TableHead className="w-28" />
                 </TableRow>
               </TableHeader>
@@ -230,13 +231,13 @@ export default function HistoryPage() {
                   const errorMsg = a.error_message;
 
                   return (
-                    <TableRow key={a.id}>
-                      <TableCell className="text-sm max-w-[240px]">
-                        <div className="font-medium truncate" title={basename(a.file_3d_path)}>
+                    <TableRow key={a.id} className="border-border">
+                      <TableCell className="max-w-[240px]">
+                        <div className="text-sm font-medium truncate text-foreground/80" title={basename(a.file_3d_path)}>
                           {basename(a.file_3d_path) || a.file_name}
                         </div>
                         {a.file_2d_path && (
-                          <div className="text-xs text-muted-foreground truncate mt-0.5" title={basename(a.file_2d_path)}>
+                          <div className="text-xs text-muted-foreground/60 truncate mt-0.5" title={basename(a.file_2d_path)}>
                             {basename(a.file_2d_path)}
                           </div>
                         )}
@@ -249,24 +250,24 @@ export default function HistoryPage() {
                             {label}
                           </Badge>
                           {errorMsg && (
-                            <span className="text-[10px] text-muted-foreground max-w-[180px] truncate" title={errorMsg}>
+                            <span className="text-[10px] text-muted-foreground/60 max-w-[180px] truncate" title={errorMsg}>
                               {errorMsg}
                             </span>
                           )}
                         </div>
                       </TableCell>
 
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground/80">
                         {a.cycle_time?.total_minutes
                           ? `${a.cycle_time.total_minutes.toFixed(1)} min`
                           : "\u2014"}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground/80">
                         {a.cost_estimation?.total_cost_usd
                           ? `$${a.cost_estimation.total_cost_usd.toFixed(2)}`
                           : "\u2014"}
                       </TableCell>
-                      <TableCell className="text-right text-xs text-muted-foreground">
+                      <TableCell className="text-right text-xs text-muted-foreground/60">
                         {new Date(a.created_at).toLocaleDateString()}
                       </TableCell>
 
@@ -292,7 +293,7 @@ export default function HistoryPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7"
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
                                 title="View details"
                               >
                                 <ArrowRight className="w-3.5 h-3.5" />

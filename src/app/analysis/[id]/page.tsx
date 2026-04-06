@@ -9,23 +9,73 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SummaryCards } from "@/components/results/summary-cards";
 import { FeatureTable } from "@/components/results/feature-table";
-import { CostBreakdownCard } from "@/components/results/cost-breakdown";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, AlertCircle, Bot, CheckCircle2, Wrench, Clock, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  Wrench,
+  Clock,
+  Loader2,
+  Timer,
+  DollarSign,
+  Layers,
+} from "lucide-react";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip as ChartTooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const STATUS_BADGE: Record<string, { variant: "success" | "destructive" | "warning" | "secondary"; label: string }> = {
-  completed: { variant: "success", label: "Completed" },
-  error: { variant: "destructive", label: "Error" },
-  processing: { variant: "warning", label: "Processing" },
-  pending: { variant: "secondary", label: "Pending" },
+  completed: { variant: "success",     label: "Completed" },
+  error:     { variant: "destructive", label: "Error"     },
+  processing:{ variant: "warning",     label: "Processing"},
+  pending:   { variant: "secondary",   label: "Pending"   },
 };
+
+const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#f97316", "#06b6d4", "#ec4899"];
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_ATTEMPTS = 100; // ~5 minutes — matches Vercel 300s function timeout
+
+// ---------------------------------------------------------------------------
+// Custom chart tooltip
+// ---------------------------------------------------------------------------
+
+function DarkTooltip({ active, payload, label, unit }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-[#1d1f2c] border border-[oklch(0.255_0.010_260)] rounded-lg shadow-xl p-2 text-xs">
+      {label && <div className="text-slate-400 mb-1">{label}</div>}
+      {payload.map((p: any, i: number) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: p.fill || p.color }} />
+          <span className="text-slate-300">{p.name || p.dataKey}:</span>
+          <span className="text-white font-mono font-medium">
+            {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
+            {unit ? ` ${unit}` : ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function AnalysisDetailPage() {
   const params = useParams();
@@ -133,7 +183,7 @@ export default function AnalysisDetailPage() {
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
         <div className="grid grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-24" />)}
         </div>
         <Skeleton className="h-64" />
       </div>
@@ -143,7 +193,7 @@ export default function AnalysisDetailPage() {
   if (error || !analysis) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <AlertCircle className="w-10 h-10 text-muted-foreground" />
+        <AlertCircle className="w-10 h-10 text-muted-foreground/40" />
         <p className="text-muted-foreground">{error || "Analysis not found"}</p>
         <Link href="/history">
           <Button variant="outline" size="sm">
@@ -170,6 +220,51 @@ export default function AnalysisDetailPage() {
   const isError = analysis.status === "error";
   const isProcessing = analysis.status === "processing" || analysis.status === "pending";
 
+  // Chart data
+  const costChartData = costItems.map((item: any, i: number) => ({
+    name: item.process || item.label || `Item ${i + 1}`,
+    value: item.cost_usd || item.amount_usd || 0,
+  }));
+
+  const cycleChartData = cycleItems.map((item: any) => ({
+    name: item.process || item.label || "Unknown",
+    value: item.time_minutes || item.minutes || 0,
+  }));
+
+  const barChartHeight = cycleChartData.length > 4 ? 260 : 180;
+
+  // KPI card definitions
+  const kpiCards = [
+    {
+      label: "Cycle Time",
+      value: totalMin.toFixed(1),
+      unit: "min",
+      icon: Timer,
+      accent: "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
+    },
+    {
+      label: "Total Cost",
+      value: `$${totalUsd.toFixed(2)}`,
+      unit: "USD",
+      icon: DollarSign,
+      accent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+    },
+    {
+      label: "Features",
+      value: String(features.length),
+      unit: "detected",
+      icon: Layers,
+      accent: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+    },
+    {
+      label: "Operations",
+      value: String(processes.length),
+      unit: "mapped",
+      icon: Wrench,
+      accent: "text-orange-400 bg-orange-500/10 border-orange-500/20",
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -181,16 +276,16 @@ export default function AnalysisDetailPage() {
                 <ArrowLeft className="w-4 h-4" />
               </Button>
             </Link>
-            <h1 className="text-xl font-bold">{analysis.file_name}</h1>
+            <h1 className="text-xl font-bold text-foreground">{analysis.file_name}</h1>
             <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
             {polling && (
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground/60">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 <span>Waiting for results...</span>
               </div>
             )}
           </div>
-          <p className="text-sm text-muted-foreground pl-9">
+          <p className="text-sm text-muted-foreground/60 pl-9">
             {new Date(analysis.created_at).toLocaleString()}
           </p>
         </div>
@@ -198,21 +293,21 @@ export default function AnalysisDetailPage() {
 
       {/* Processing banner */}
       {isProcessing && !pollTimedOut && (
-        <div className="rounded-lg bg-warning/10 border border-warning/20 p-4">
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/6 p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <Loader2 className="w-5 h-5 text-warning animate-spin shrink-0" />
-              <div className="text-sm text-warning-foreground">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+              <div className="text-[13px] text-amber-300/80">
                 Analysis is running — this page updates automatically.
                 {elapsedSeconds >= 40 && (
-                  <span className="block text-xs text-warning-foreground/70 mt-0.5">
+                  <span className="block text-[11px] text-amber-400/50 mt-0.5">
                     If RunPod utilization is 0%, the model stopped. The UI will update within ~30s of that.
                   </span>
                 )}
               </div>
             </div>
             {elapsedSeconds > 0 && (
-              <span className="text-xs font-mono text-warning-foreground/60 shrink-0">
+              <span className="text-[11px] font-mono text-amber-400/50 shrink-0">
                 {Math.floor(elapsedSeconds / 60) > 0
                   ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
                   : `${elapsedSeconds}s`}
@@ -224,12 +319,12 @@ export default function AnalysisDetailPage() {
 
       {/* Polling timed out banner */}
       {isProcessing && pollTimedOut && (
-        <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
+        <div className="rounded-lg bg-red-500/8 border border-red-500/20 p-4">
           <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+            <AlertCircle className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
             <div className="flex-1">
-              <div className="text-sm font-medium text-destructive">Analysis may be stuck</div>
-              <div className="text-sm text-destructive/80 mt-1">
+              <div className="text-sm font-medium text-red-400">Analysis may be stuck</div>
+              <div className="text-sm text-red-400/70 mt-1">
                 The job is taking longer than expected and may have timed out. Check the History page and mark it as failed if it&apos;s no longer running.
               </div>
             </div>
@@ -244,43 +339,155 @@ export default function AnalysisDetailPage() {
 
       {/* Error banner */}
       {isError && analysis.error_message && (
-        <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-4">
+        <div className="rounded-lg bg-red-500/8 border border-red-500/20 p-4">
           <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+            <AlertCircle className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
             <div>
-              <div className="text-sm font-medium text-destructive">Analysis Error</div>
-              <div className="text-sm text-destructive/80 mt-1">{analysis.error_message}</div>
+              <div className="text-sm font-medium text-red-400">Analysis Error</div>
+              <div className="text-sm text-red-400/70 mt-1">{analysis.error_message}</div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Summary — show even with partial data */}
-      <SummaryCards
-        totalMinutes={totalMin}
-        totalUsd={totalUsd}
-        featureCount={features.length}
-        operationCount={processes.length}
-      />
+      {/* KPI Strip — 4 cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {kpiCards.map((c) => (
+          <div
+            key={c.label}
+            className={`rounded-xl border p-4 flex items-start gap-3 ${c.accent}`}
+          >
+            <div className={`mt-0.5 shrink-0 ${c.accent.split(" ")[0]}`}>
+              <c.icon className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-3xl font-bold font-mono leading-none tracking-tight">
+                {c.value}
+              </div>
+              <div className="text-[10px] font-mono mt-1 opacity-60">{c.unit}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{c.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
 
-      {/* Breakdowns — only show if we have data */}
-      {(cycleItems.length > 0 || costItems.length > 0) && (
+      {/* Charts — only render if data exists */}
+      {(costChartData.length > 0 || cycleChartData.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {cycleItems.length > 0 && (
-            <CostBreakdownCard
-              title="Cycle Time Breakdown"
-              items={cycleItems.map((i: any) => ({ process: i.process, minutes: i.time_minutes, category: "machining" }))}
-              total={totalMin.toFixed(1)}
-              unit="min"
-            />
+          {/* Cost Donut Chart */}
+          {costChartData.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-foreground/80">
+                  <DollarSign className="w-4 h-4 text-emerald-400" />
+                  Cost Breakdown
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="relative">
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={costChartData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={2}
+                      >
+                        {costChartData.map((_: any, index: number) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          />
+                        ))}
+                      </Pie>
+                      <ChartTooltip
+                        content={<DarkTooltip unit="USD" />}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  {/* Center label */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="text-center">
+                      <div className="text-lg font-bold font-mono text-foreground">
+                        ${totalUsd.toFixed(0)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono">total</div>
+                    </div>
+                  </div>
+                </div>
+                {/* Legend */}
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-2 justify-center">
+                  {costChartData.map((item: any, i: number) => (
+                    <div key={item.name} className="flex items-center gap-1.5">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: CHART_COLORS[i % CHART_COLORS.length] }}
+                      />
+                      <span className="text-[10px] text-muted-foreground/70 truncate max-w-[100px]">
+                        {item.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
-          {costItems.length > 0 && (
-            <CostBreakdownCard
-              title="Cost Breakdown"
-              items={costItems.map((i: any) => ({ line: i.process, amount_usd: i.cost_usd, category: "machining" }))}
-              total={totalUsd.toFixed(2)}
-              unit="USD"
-            />
+
+          {/* Cycle Time Bar Chart */}
+          {cycleChartData.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-foreground/80">
+                  <Timer className="w-4 h-4 text-cyan-400" />
+                  Cycle Time by Operation
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={barChartHeight}>
+                  <BarChart
+                    data={cycleChartData}
+                    layout="vertical"
+                    margin={{ top: 0, right: 16, bottom: 0, left: 0 }}
+                  >
+                    <CartesianGrid
+                      horizontal={false}
+                      stroke="oklch(0.255 0.010 260)"
+                      strokeDasharray="0"
+                    />
+                    <XAxis
+                      type="number"
+                      tick={{ fontSize: 10, fill: "oklch(0.54 0.015 260)", fontFamily: "var(--font-mono)" }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => `${v}`}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={110}
+                      tick={{ fontSize: 10, fill: "oklch(0.54 0.015 260)" }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v: string) => v.length > 18 ? `${v.slice(0, 17)}…` : v}
+                    />
+                    <ChartTooltip
+                      content={<DarkTooltip unit="min" />}
+                      cursor={{ fill: "oklch(0.255 0.010 260 / 0.4)" }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      name="Minutes"
+                      fill="#f59e0b"
+                      radius={[0, 3, 3, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
           )}
         </div>
       )}
@@ -292,7 +499,7 @@ export default function AnalysisDetailPage() {
         <TabsList>
           <TabsTrigger value="features">Features ({features.length})</TabsTrigger>
           <TabsTrigger value="processes">Processes ({processes.length})</TabsTrigger>
-          <TabsTrigger value="dimensions">Dimensions & GD&T</TabsTrigger>
+          <TabsTrigger value="dimensions">Dimensions &amp; GD&amp;T</TabsTrigger>
           {agentLog.length > 0 && (
             <TabsTrigger value="activity">Agent Activity ({agentLog.length})</TabsTrigger>
           )}
@@ -318,15 +525,15 @@ export default function AnalysisDetailPage() {
               {processes.length > 0 ? (
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Operation</TableHead>
-                      <TableHead>Category</TableHead>
+                    <TableRow className="border-border">
+                      <TableHead className="text-muted-foreground/70">Operation</TableHead>
+                      <TableHead className="text-muted-foreground/70">Category</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {processes.map((p: any, i: number) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-sm">{p.name}</TableCell>
+                      <TableRow key={i} className="border-border">
+                        <TableCell className="text-sm text-foreground/80">{p.name}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="text-[10px]">{p.category}</Badge>
                         </TableCell>
@@ -347,28 +554,28 @@ export default function AnalysisDetailPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm">Dimensions</CardTitle>
+                <CardTitle className="text-sm text-foreground/80">Dimensions</CardTitle>
               </CardHeader>
               <CardContent>
                 {dimensions.length > 0 ? (
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Feature</TableHead>
-                        <TableHead className="text-right">Nominal</TableHead>
-                        <TableHead className="text-right">Tol +</TableHead>
-                        <TableHead className="text-right">Tol -</TableHead>
-                        <TableHead>Unit</TableHead>
+                      <TableRow className="border-border">
+                        <TableHead className="text-muted-foreground/70">Feature</TableHead>
+                        <TableHead className="text-right text-muted-foreground/70">Nominal</TableHead>
+                        <TableHead className="text-right text-muted-foreground/70">Tol +</TableHead>
+                        <TableHead className="text-right text-muted-foreground/70">Tol -</TableHead>
+                        <TableHead className="text-muted-foreground/70">Unit</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {dimensions.map((d: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="text-sm">{d.feature}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{d.nominal ?? "—"}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{d.tolerance_plus ?? "—"}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{d.tolerance_minus ?? "—"}</TableCell>
-                          <TableCell className="text-xs">{d.unit || "—"}</TableCell>
+                        <TableRow key={i} className="border-border">
+                          <TableCell className="text-sm text-foreground/80">{d.feature}</TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground/80">{d.nominal ?? "—"}</TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground/80">{d.tolerance_plus ?? "—"}</TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground/80">{d.tolerance_minus ?? "—"}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground/70">{d.unit || "—"}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -383,28 +590,28 @@ export default function AnalysisDetailPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm">GD&T Callouts</CardTitle>
+                <CardTitle className="text-sm text-foreground/80">GD&amp;T Callouts</CardTitle>
               </CardHeader>
               <CardContent>
                 {gdtCallouts.length > 0 ? (
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Feature</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead className="text-right">Value</TableHead>
-                        <TableHead>Datum</TableHead>
+                      <TableRow className="border-border">
+                        <TableHead className="text-muted-foreground/70">Feature</TableHead>
+                        <TableHead className="text-muted-foreground/70">Type</TableHead>
+                        <TableHead className="text-right text-muted-foreground/70">Value</TableHead>
+                        <TableHead className="text-muted-foreground/70">Datum</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {gdtCallouts.map((g: any, i: number) => (
-                        <TableRow key={i}>
-                          <TableCell className="text-sm">{g.feature}</TableCell>
+                        <TableRow key={i} className="border-border">
+                          <TableCell className="text-sm text-foreground/80">{g.feature}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-[10px]">{g.type}</Badge>
                           </TableCell>
-                          <TableCell className="text-right font-mono text-xs">{g.value}</TableCell>
-                          <TableCell className="text-xs">{g.datum || "—"}</TableCell>
+                          <TableCell className="text-right font-mono text-xs text-muted-foreground/80">{g.value}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground/70">{g.datum || "—"}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -445,34 +652,37 @@ function AgentLogEntry({ entry }: { entry: { type: string; data: any; ts: number
   switch (type) {
     case "agent_start":
       return (
-        <div className="flex items-center gap-2 text-sm text-primary">
+        <div className="flex items-center gap-2 text-sm text-primary/80">
           <Bot className="w-3.5 h-3.5" />
           <span>{data.message || "Agent started"}</span>
         </div>
       );
     case "status":
       return (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
           <Clock className="w-3 h-3" />
-          <span className="font-medium">{data.title}</span>
+          <span className="font-medium text-foreground/70">{data.title}</span>
           <span>{data.message}</span>
         </div>
       );
     case "tool_call":
       return (
-        <div className="flex items-center gap-2 text-xs rounded bg-muted px-2 py-1">
-          <Wrench className="w-3 h-3 text-blue-500" />
-          <span className="font-mono font-medium">{data.tool}</span>
-          <span className="text-muted-foreground">called</span>
+        <div className="flex items-center gap-2 text-xs rounded bg-muted/60 px-2 py-1">
+          <Wrench className="w-3 h-3 text-blue-400" />
+          <span className="font-mono font-medium text-foreground/80">{data.tool}</span>
+          <span className="text-muted-foreground/60">called</span>
         </div>
       );
     case "tool_result": {
       const hasErr = data.result?.error;
       return (
-        <div className={`flex items-center gap-2 text-xs rounded px-2 py-1 ${hasErr ? "bg-destructive/5" : "bg-emerald-500/5"}`}>
-          {hasErr ? <AlertCircle className="w-3 h-3 text-destructive" /> : <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
-          <span className="font-mono font-medium">{data.tool}</span>
-          <span className="text-muted-foreground">
+        <div className={`flex items-center gap-2 text-xs rounded px-2 py-1 ${hasErr ? "bg-red-500/8" : "bg-emerald-500/8"}`}>
+          {hasErr
+            ? <AlertCircle className="w-3 h-3 text-red-400" />
+            : <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          }
+          <span className="font-mono font-medium text-foreground/80">{data.tool}</span>
+          <span className="text-muted-foreground/60">
             {hasErr ? `error: ${data.result.error}` : `completed (${data.duration_ms}ms)`}
           </span>
         </div>
@@ -480,27 +690,27 @@ function AgentLogEntry({ entry }: { entry: { type: string; data: any; ts: number
     }
     case "final_answer":
       return (
-        <div className="flex items-start gap-2 text-sm rounded bg-emerald-500/5 border border-emerald-500/20 p-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
+        <div className="flex items-start gap-2 text-sm rounded bg-emerald-500/8 border border-emerald-500/20 p-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5" />
           <div>
-            <div className="font-medium text-emerald-700">Analysis Complete</div>
-            <div className="text-xs text-muted-foreground mt-1 line-clamp-3">{data.summary}</div>
+            <div className="font-medium text-emerald-400">Analysis Complete</div>
+            <div className="text-xs text-muted-foreground/60 mt-1 line-clamp-3">{data.summary}</div>
           </div>
         </div>
       );
     case "error":
       return (
-        <div className="flex items-start gap-2 text-sm rounded bg-destructive/5 border border-destructive/20 p-2">
-          <AlertCircle className="w-4 h-4 text-destructive mt-0.5" />
-          <span className="text-destructive text-xs">{data.message}</span>
+        <div className="flex items-start gap-2 text-sm rounded bg-red-500/8 border border-red-500/20 p-2">
+          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5" />
+          <span className="text-red-400/80 text-xs">{data.message}</span>
         </div>
       );
     case "done":
       return (
-        <div className="flex items-center gap-3 text-xs text-muted-foreground border-t pt-2 mt-2">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground/60 border-t border-border pt-2 mt-2 font-mono">
           <span>Completed in {data.elapsed_seconds}s</span>
-          {data.total_minutes > 0 && <span className="font-medium text-foreground">{data.total_minutes} min</span>}
-          {data.total_usd > 0 && <span className="font-medium text-foreground">USD {data.total_usd}</span>}
+          {data.total_minutes > 0 && <span className="font-medium text-foreground/70">{data.total_minutes} min</span>}
+          {data.total_usd > 0 && <span className="font-medium text-foreground/70">USD {data.total_usd}</span>}
         </div>
       );
     default:

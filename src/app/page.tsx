@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { FileDropzone } from "@/components/upload/file-dropzone";
 import { AgentStream, type AgentStreamMessage } from "@/components/agent/agent-stream";
-import { SummaryCards } from "@/components/results/summary-cards";
 import { FeatureTable } from "@/components/results/feature-table";
 import { ProcessTable } from "@/components/results/process-table";
 import { CostBreakdownCard } from "@/components/results/cost-breakdown";
@@ -350,28 +349,28 @@ export default function HomePage() {
     return (
       <div className="space-y-8">
         {/* Hero */}
-        <div className="text-center space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/5 border px-4 py-1.5 text-sm">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="font-medium">Agentic AI Pipeline</span>
+        <div className="text-center space-y-3 pt-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 border border-primary/20 px-3.5 py-1 text-[12px]">
+            <Sparkles className="w-3 h-3 text-primary" />
+            <span className="font-medium text-primary/80">Agentic AI Pipeline</span>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">CNC Part Costing Automation</h1>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
-            Upload your engineering drawings and CAD files. The AI agent will autonomously extract features,
-            map CNC processes, estimate cycle time, and calculate fabrication cost.
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">CNC Part Costing Automation</h1>
+          <p className="text-[13px] text-muted-foreground max-w-xl mx-auto leading-relaxed">
+            Upload your engineering drawings and CAD files. The AI agent autonomously extracts features,
+            maps CNC processes, and calculates fabrication cost.
           </p>
         </div>
 
         {/* Pipeline visualization */}
-        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+        <div className="flex items-center justify-center gap-1 flex-wrap">
           {PIPELINE_STEPS.map((step, i) => (
-            <div key={step.label} className="flex items-center gap-1.5">
-              <div className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5">
-                <step.icon className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium">{step.label}</span>
+            <div key={step.label} className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1">
+                <step.icon className="w-3 h-3 text-muted-foreground/50" />
+                <span className="text-[11px] font-medium text-muted-foreground/70">{step.label}</span>
               </div>
               {i < PIPELINE_STEPS.length - 1 && (
-                <ArrowRight className="w-3 h-3 text-muted-foreground/40" />
+                <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/25" />
               )}
             </div>
           ))}
@@ -382,7 +381,7 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Upload Files</CardTitle>
             <CardDescription>
-              Both files are required. The STEP file provides 3D geometry; the drawing provides GD&T, tolerances, and material specification.
+              Both files are required. The STEP file provides 3D geometry; the drawing provides GD&amp;T, tolerances, and material specification.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -408,7 +407,7 @@ export default function HomePage() {
             </div>
 
             {error && (
-              <div className="rounded-lg bg-destructive/10 text-destructive text-sm px-4 py-3">
+              <div className="bg-red-500/8 border border-red-500/20 text-red-400 rounded-lg p-3 text-sm">
                 {error}
               </div>
             )}
@@ -435,16 +434,16 @@ export default function HomePage() {
         </Card>
 
         {/* Features info */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
-            { title: "Agentic AI", desc: "The AI agent autonomously decides which tools to call, reasons about results, and adapts its approach." },
-            { title: "Vision + Tool Calling", desc: "Uses vision AI for drawing extraction and specialized tools for manufacturing analysis." },
-            { title: "Real-time Streaming", desc: "Watch the agent think, call tools, and build your cost estimate in real-time." },
+            { title: "Agentic AI", desc: "Autonomously decides which tools to call, reasons about results, and adapts its approach." },
+            { title: "Vision + Tools", desc: "Vision AI for drawing extraction paired with specialized manufacturing analysis tools." },
+            { title: "Real-time Stream", desc: "Watch the agent think, call tools, and build your cost estimate in real-time." },
           ].map((f) => (
             <Card key={f.title} className="py-4">
               <CardContent className="px-4">
-                <div className="text-sm font-medium">{f.title}</div>
-                <div className="text-xs text-muted-foreground mt-1">{f.desc}</div>
+                <div className="text-[12px] font-semibold text-foreground/80">{f.title}</div>
+                <div className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{f.desc}</div>
               </CardContent>
             </Card>
           ))}
@@ -496,22 +495,24 @@ export default function HomePage() {
       </div>
 
       {/* Pipeline progress */}
-      <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="flex items-center gap-1 flex-wrap">
         {PIPELINE_STEPS.map((step, i) => {
           const isDone = completedTools.has(step.tool);
           const isActive = activeTool === step.tool;
           return (
-            <div key={step.label} className="flex items-center gap-1.5">
-              <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 border transition-all ${
-                isDone ? "bg-emerald-50 border-emerald-200 text-emerald-700" :
-                isActive ? "bg-primary/10 border-primary/30 text-primary animate-pulse" :
-                "bg-muted border-transparent text-muted-foreground"
+            <div key={step.label} className="flex items-center gap-1">
+              <div className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 border transition-all ${
+                isDone
+                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                  : isActive
+                    ? "bg-primary/10 border-primary/20 text-primary animate-pulse"
+                    : "bg-card border-border text-muted-foreground/60"
               }`}>
                 <step.icon className="w-3 h-3" />
                 <span className="text-[11px] font-medium">{step.label}</span>
               </div>
               {i < PIPELINE_STEPS.length - 1 && (
-                <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/30" />
+                <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/20" />
               )}
             </div>
           );
@@ -524,8 +525,8 @@ export default function HomePage() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Agent stream (left - wider) */}
         <div className="lg:col-span-3">
-          <Card className="py-0 overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/30">
+          <Card className="py-0 overflow-hidden bg-card border-border rounded-xl">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20">
               <Bot className="w-4 h-4 text-primary" />
               <span className="text-sm font-medium flex-1">Agent Activity</span>
               {isStreaming && <Badge variant="info" className="text-[10px]">Live</Badge>}
@@ -542,21 +543,21 @@ export default function HomePage() {
 
         {/* Results panel (right - narrower) */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Summary cards */}
+          {/* Summary mini-cards */}
           {results && (
             <div className="grid grid-cols-2 gap-3">
-              <Card className="py-3">
+              <Card className="py-4 border-cyan-500/20 bg-cyan-500/8">
                 <CardContent className="px-3 text-center">
-                  <Timer className="w-4 h-4 mx-auto text-cyan-600 mb-1" />
-                  <div className="text-lg font-bold">{(results.total_minutes as number)?.toFixed(1)} min</div>
-                  <div className="text-[10px] text-muted-foreground">Cycle Time</div>
+                  <Timer className="w-4 h-4 mx-auto text-cyan-400 mb-1.5" />
+                  <div className="text-xl font-bold font-mono text-cyan-400">{(results.total_minutes as number)?.toFixed(1)}</div>
+                  <div className="text-[10px] text-cyan-400/60 font-mono">min</div>
                 </CardContent>
               </Card>
-              <Card className="py-3">
+              <Card className="py-4 border-emerald-500/20 bg-emerald-500/8">
                 <CardContent className="px-3 text-center">
-                  <DollarSign className="w-4 h-4 mx-auto text-emerald-600 mb-1" />
-                  <div className="text-lg font-bold">${(results.total_usd as number)?.toFixed(2)}</div>
-                  <div className="text-[10px] text-muted-foreground">Total Cost</div>
+                  <DollarSign className="w-4 h-4 mx-auto text-emerald-400 mb-1.5" />
+                  <div className="text-xl font-bold font-mono text-emerald-400">${(results.total_usd as number)?.toFixed(2)}</div>
+                  <div className="text-[10px] text-emerald-400/60 font-mono">USD</div>
                 </CardContent>
               </Card>
             </div>
@@ -594,7 +595,7 @@ export default function HomePage() {
           {!results && isStreaming && (
             <Card className="py-8">
               <CardContent className="text-center text-sm text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-primary" />
                 Waiting for agent results...
               </CardContent>
             </Card>
@@ -632,7 +633,6 @@ export default function HomePage() {
           </Tabs>
         </>
       )}
-
     </div>
   );
 }
