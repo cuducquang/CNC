@@ -6,11 +6,14 @@
  * delta.reasoning_content; the final answer arrives via delta.content.
  */
 
-// null = no timeout. Set VISION_TIMEOUT_MS=0 in env to disable.
+// Per-page VLM stream timeout.
+// On Vercel: auto 60 s (4 pages × 60 s = 240 s < 300 s function limit).
+// Override with VISION_TIMEOUT_MS env var; set to 0 to disable.
 const VISION_TIMEOUT_MS: number | null = (() => {
-  const raw = parseInt(process.env.VISION_TIMEOUT_MS || "300000", 10);
-  if (raw === 0) return null;
-  return Number.isFinite(raw) && raw > 0 ? raw : 300_000;
+  const raw = parseInt(process.env.VISION_TIMEOUT_MS || "", 10);
+  if (!isNaN(raw) && raw >= 0) return raw === 0 ? null : raw;
+  // Auto: tight budget on Vercel, no cap locally.
+  return process.env.VERCEL === "1" ? 60_000 : null;
 })();
 
 function buildCandidateBaseUrls(rawBaseUrl: string): string[] {
@@ -393,9 +396,20 @@ export async function collectOllamaVisionChat(
   }
 
   if (streamTimedOut) {
-    throw new Error(
-      `Vision model timed out (${VISION_TIMEOUT_MS !== null ? Math.round(VISION_TIMEOUT_MS / 1000) : "∞"}s) while reading stream.`,
+    // On timeout, attempt JSON extraction from whatever partial content arrived.
+    // This prevents one slow/looping page from killing the entire pipeline.
+    const partial = thinkContent.length > 0 ? thinkContent : fullContent;
+    const secs = VISION_TIMEOUT_MS !== null ? Math.round(VISION_TIMEOUT_MS / 1000) : "∞";
+    console.warn(
+      `[vision-vllm] Stream timed out after ${secs}s — attempting JSON extraction from partial content (${partial.length} chars)`,
     );
+    if (partial.length > 0) {
+      // Try to extract a valid JSON from whatever was generated before timeout
+      fullContent  = extractJsonFromThinking(partial);
+      thinkContent = ""; // prevent double-processing below
+    } else {
+      throw new Error(`Vision model timed out (${secs}s) — no content received. The model may be overloaded.`);
+    }
   }
 
   if (streamInactive) {

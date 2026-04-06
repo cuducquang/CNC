@@ -57,6 +57,7 @@ DRAWING PAGES — output this JSON schema:
 RULES (read carefully):
 1. Extract ONLY explicitly labeled values — never infer or guess.
 2. UNCERTAIN SYMBOL OR CALLOUT → STOP thinking about it immediately. Output nothing for that symbol and move to the next item.
+2b. UNIT not labeled anywhere on the drawing → set unit to null immediately. Do NOT debate this.
 3. Omit tolerance_plus/tolerance_minus if no tolerance is shown. Zero is a valid tolerance value.
 4. Bilateral ±X → tolerance_plus=X, tolerance_minus=X. Unilateral +A/−B → tolerance_plus=A, tolerance_minus=B.
 5. R prefix = RADIUS always (R2.34, 4X R4.50). Never a thread. Threads have pitch: M8x1.25, 1/4-20 UNC, TAP, THRU.
