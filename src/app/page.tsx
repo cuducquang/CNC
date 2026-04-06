@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 // ---------------------------------------------------------------------------
 // SSE parser
@@ -131,18 +132,45 @@ export default function HomePage() {
     setResults(null);
 
     try {
-      // Upload files
-      const formData = new FormData();
-      if (file3d) formData.append("file_3d", file3d);
-      if (file2d) formData.append("file_2d", file2d);
+      // Upload files directly from the browser to Supabase Storage.
+      // This bypasses Vercel's 4.5 MB serverless body limit — no file bytes
+      // pass through any Vercel function.
+      const sbClient = createSupabaseBrowserClient();
+      const analysisId = crypto.randomUUID();
+      const file3dPath = `uploads/${analysisId}/3d_${file3d.name}`;
+      const file2dPath = `uploads/${analysisId}/2d_${file2d.name}`;
 
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!uploadRes.ok) {
-        const d = await uploadRes.json();
-        throw new Error(d.error || "Upload failed");
+      const [up3d, up2d] = await Promise.all([
+        sbClient.storage.from("parts").upload(file3dPath, file3d, {
+          contentType: "application/step",
+          upsert: true,
+        }),
+        sbClient.storage.from("parts").upload(file2dPath, file2d, {
+          contentType: file2d.type || "application/octet-stream",
+          upsert: true,
+        }),
+      ]);
+
+      if (up3d.error) throw new Error(`3D upload failed: ${up3d.error.message}`);
+      if (up2d.error) throw new Error(`2D upload failed: ${up2d.error.message}`);
+
+      // Register the uploaded paths in the DB (tiny JSON call — no file bytes)
+      const registerRes = await fetch("/api/upload/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analysis_id: analysisId,
+          file_3d_path: file3dPath,
+          file_2d_path: file2dPath,
+          file_name: file3d.name,
+        }),
+      });
+      if (!registerRes.ok) {
+        const d = await registerRes.json();
+        throw new Error(d.error || "Registration failed");
       }
 
-      const uploadResult = await uploadRes.json();
+      const uploadResult = await registerRes.json();
       setAnalysisId(uploadResult.analysis_id);
 
       // Start agent SSE stream
