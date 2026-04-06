@@ -251,11 +251,12 @@ export async function collectOllamaVisionChat(
     // Break repetitive loops in the thinking stream.
     // 1.05 was insufficient for this model on ambiguous GD&T symbols — bumped to 1.12.
     repetition_penalty: 1.12,
-    // 12288 tokens total (thinking + answer). Per-page JSON answer needs ~2k tokens max;
-    // the remaining ~10k is available for thinking. Keeping this lower forces the model
-    // to conclude faster and prevents runaway thinking loops.
-    max_tokens: 12288,
-    chat_template_kwargs: { enable_thinking: true, thinking_budget_tokens: 6000 },
+    // Token budget: on Vercel the 300s function timeout allows ~60s/page at 100 tps
+    // → 6144 tokens/page max. Locally there is no constraint so we allow more.
+    // The thinking budget is a hint to the model; max_tokens is the hard cap.
+    ...(process.env.VERCEL === "1"
+      ? { max_tokens: 6144,  chat_template_kwargs: { enable_thinking: true, thinking_budget_tokens: 3000 } }
+      : { max_tokens: 12288, chat_template_kwargs: { enable_thinking: true, thinking_budget_tokens: 6000 } }),
     // Required so the </think> boundary token is visible in delta.content,
     // allowing the streaming code to separate thinking from the answer.
     skip_special_tokens: false,

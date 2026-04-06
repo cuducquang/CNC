@@ -203,8 +203,13 @@ export async function drawingBufferToBase64Pages(buffer: Buffer): Promise<string
     return [buffer.toString("base64")];
   }
 
-  const maxPages = maxPdfPages();
   const onVercel = process.env.VERCEL === "1";
+  // On Vercel, the thinking model (Qwen3-VL-32B) uses ~30-60s per page.
+  // Hard-cap at 4 pages to stay within the 300s function timeout.
+  // Locally/Docker there is no such constraint.
+  const maxPages = onVercel
+    ? Math.min(maxPdfPages(), 4)
+    : maxPdfPages();
 
   if (!onVercel) {
     // Local / Docker: try fast native methods first
