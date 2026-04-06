@@ -9,6 +9,9 @@ httpx>=0.27.0
 # Data models
 pydantic>=2.7.0
 
+# Env file loading (.env.local for local dev)
+python-dotenv>=1.0.0
+
 # PDF → image conversion (install at least ONE)
 pypdfium2>=4.30.0            # preferred: pure Python, no binary deps
 # PyMuPDF>=1.24.0            # alternative: fast, needs libmupdf
