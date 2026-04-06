@@ -26,6 +26,15 @@ import os
 import subprocess
 import tempfile
 
+# Load .env.local from project root (local dev) — no-op if file absent or dotenv not installed
+try:
+    from dotenv import load_dotenv
+    _env = os.path.join(os.path.dirname(__file__), "..", ".env.local")
+    if os.path.exists(_env):
+        load_dotenv(_env, override=False)
+except ImportError:
+    pass
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse

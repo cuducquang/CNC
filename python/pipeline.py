@@ -417,19 +417,22 @@ async def run_pipeline(
     t1 = time.time()
 
     try:
-        if len(pages) == 1:
-            # Stream thinking for the single page
+        all_parsed:   list = []
+        all_outcomes: list = []
+
+        # Sequential: one page at a time, stream thinking for each
+        for page_b64 in pages:
             thinking_queue: asyncio.Queue = asyncio.Queue()
 
-            async def _on_thinking(chunk: str):
-                await thinking_queue.put(chunk)
+            async def _on_thinking(chunk: str, _q: asyncio.Queue = thinking_queue) -> None:
+                await _q.put(chunk)
 
-            async def _page1_with_signal():
-                result = await _analyze_one_page(pages[0], on_thinking=_on_thinking)
-                await thinking_queue.put(None)  # done signal
+            async def _run_page(_p: str = page_b64, _q: asyncio.Queue = thinking_queue) -> tuple[dict, str]:
+                result = await _analyze_one_page(_p, on_thinking=_on_thinking)
+                await _q.put(None)
                 return result
 
-            page1_task = asyncio.create_task(_page1_with_signal())
+            page_task = asyncio.create_task(_run_page())
 
             while True:
                 chunk = await thinking_queue.get()
@@ -437,44 +440,9 @@ async def run_pipeline(
                     break
                 yield "thinking", {"content": chunk}
 
-            page1_parsed, page1_outcome = await page1_task
-            all_parsed   = [page1_parsed]
-            all_outcomes = [page1_outcome]
-
-        else:
-            # Multiple pages: stream thinking for page 1, run others silently in parallel
-            thinking_queue = asyncio.Queue()
-
-            async def _on_thinking(chunk: str):
-                await thinking_queue.put(chunk)
-
-            async def _page1_signal():
-                result = await _analyze_one_page(pages[0], on_thinking=_on_thinking)
-                await thinking_queue.put(None)
-                return result
-
-            page1_task  = asyncio.create_task(_page1_signal())
-            other_tasks = [asyncio.create_task(_analyze_one_page(p)) for p in pages[1:]]
-
-            # Drain thinking from page 1
-            while True:
-                chunk = await thinking_queue.get()
-                if chunk is None:
-                    break
-                yield "thinking", {"content": chunk}
-
-            page1_result = await page1_task
-            other_results = await asyncio.gather(*other_tasks, return_exceptions=True)
-
-            all_parsed   = [page1_result[0]]
-            all_outcomes = [page1_result[1]]
-            for r in other_results:
-                if isinstance(r, Exception):
-                    all_parsed.append({"raw_model_output": str(r), "dimensions": [], "gdt": [], "threads": []})
-                    all_outcomes.append("unparseable")
-                else:
-                    all_parsed.append(r[0])
-                    all_outcomes.append(r[1])
+            parsed, outcome = await page_task
+            all_parsed.append(parsed)
+            all_outcomes.append(outcome)
 
         # Merge results
         ok_parsed = [p for p, o in zip(all_parsed, all_outcomes) if o == "ok"]

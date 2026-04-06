@@ -362,8 +362,8 @@ async def collect_ollama_vision_chat(
     Returns: {"content": str}
     Raises on network errors or inactivity timeout.
     """
-    base_url    = (url   or os.environ.get("VISION_MODEL_URL")  or "http://localhost:11434").rstrip("/")
-    vision_model = (model or os.environ.get("VISION_MODEL_NAME") or "/workspace/models/Qwen3-VL-32B-Thinking-FP8")
+    base_url    = (url   or os.environ.get("VISION_MODEL_URL") or os.environ.get("LOCAL_OLLAMA_URL") or "http://localhost:11434").rstrip("/")
+    vision_model = (model or os.environ.get("VISION_MODEL_NAME") or os.environ.get("VISION_MODEL") or "/workspace/models/Qwen3-VL-32B-Thinking-FP8")
 
     images = image_base64 if isinstance(image_base64, list) else [image_base64]
     t0     = time.time()
@@ -389,9 +389,9 @@ async def collect_ollama_vision_chat(
             },
         ],
         "stream": True,
-        "temperature": 0.15,
+        "temperature": 1.5,
         "repetition_penalty": 1.12,
-        "max_tokens": 12288,
+        "max_tokens": 16384,
         "chat_template_kwargs": {"enable_thinking": True, "thinking_budget_tokens": 6000},
         "skip_special_tokens": False,
     }
