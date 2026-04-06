@@ -352,11 +352,11 @@ export default function HomePage() {
         <div className="text-center space-y-3 pt-2">
           <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 border border-primary/20 px-3.5 py-1 text-[12px]">
             <Sparkles className="w-3 h-3 text-primary" />
-            <span className="font-medium text-primary/80">Agentic AI Pipeline</span>
+            <span className="font-medium text-primary/80">AI Pipeline</span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">CNC Part Costing Automation</h1>
           <p className="text-[13px] text-muted-foreground max-w-xl mx-auto leading-relaxed">
-            Upload your engineering drawings and CAD files. The AI agent autonomously extracts features,
+            Upload your engineering drawings and CAD files. The AI automatically extracts features,
             maps CNC processes, and calculates fabrication cost.
           </p>
         </div>
@@ -426,7 +426,7 @@ export default function HomePage() {
               ) : (
                 <>
                   <Bot className="w-4 h-4" />
-                  Start Agent Analysis
+                  Start Analysis
                 </>
               )}
             </Button>
@@ -436,9 +436,9 @@ export default function HomePage() {
         {/* Features info */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
-            { title: "Agentic AI", desc: "Autonomously decides which tools to call, reasons about results, and adapts its approach." },
+            { title: "AI Vision", desc: "Vision AI reads your engineering drawings and extracts features, GD&T, and tolerances automatically." },
             { title: "Vision + Tools", desc: "Vision AI for drawing extraction paired with specialized manufacturing analysis tools." },
-            { title: "Real-time Stream", desc: "Watch the agent think, call tools, and build your cost estimate in real-time." },
+            { title: "Real-time Stream", desc: "Watch the pipeline process your files and build your cost estimate in real-time." },
           ].map((f) => (
             <Card key={f.title} className="py-4">
               <CardContent className="px-4">
@@ -466,7 +466,7 @@ export default function HomePage() {
               ? "Analysis Complete"
               : hasError && !isStreaming
                 ? "Analysis Failed"
-                : "Agent Analysis"}
+                : "Analysis"}
           </h2>
           <p className="text-sm text-muted-foreground">
             {[file3d?.name, file2d?.name].filter(Boolean).join(" + ") || "Processing..."}
@@ -528,7 +528,7 @@ export default function HomePage() {
           <Card className="py-0 overflow-hidden bg-card border-border rounded-xl">
             <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20">
               <Bot className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium flex-1">Agent Activity</span>
+              <span className="text-sm font-medium flex-1">Pipeline Activity</span>
               {isStreaming && <Badge variant="info" className="text-[10px]">Live</Badge>}
             </div>
             <div className="h-[500px]">
@@ -586,7 +586,7 @@ export default function HomePage() {
             <Card className="py-8">
               <CardContent className="text-center text-sm text-muted-foreground">
                 {hasError
-                  ? "Analysis encountered an error. Check the agent activity log for details."
+                  ? "Analysis encountered an error. Check the activity log for details."
                   : "No results available."}
               </CardContent>
             </Card>
@@ -596,7 +596,7 @@ export default function HomePage() {
             <Card className="py-8">
               <CardContent className="text-center text-sm text-muted-foreground">
                 <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-primary" />
-                Waiting for agent results...
+                Waiting for results...
               </CardContent>
             </Card>
           )}

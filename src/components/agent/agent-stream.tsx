@@ -46,7 +46,7 @@ export function AgentStream({ messages, liveThinking, isStreaming }: AgentStream
         {isStreaming && !liveThinking && messages.length > 0 && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground/60 py-2">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Agent is processing...</span>
+            <span>Processing...</span>
           </div>
         )}
 
@@ -67,7 +67,7 @@ function AgentMessage({ msg }: { msg: AgentStreamMessage }) {
             <Sparkles className="w-3.5 h-3.5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-semibold text-primary/90">Agentic Analysis Started</div>
+            <div className="text-[13px] font-semibold text-primary/90">Analysis Started</div>
             <div className="text-[11px] text-primary/50 mt-0.5">
               {data.message as string}
             </div>

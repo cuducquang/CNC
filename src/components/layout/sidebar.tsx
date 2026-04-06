@@ -54,7 +54,7 @@ export function Sidebar() {
       <div className="px-3 py-3 border-t border-sidebar-border">
         <div className="flex items-center gap-2 px-3 py-2">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 status-online shrink-0" />
-          <span className="text-[11px] text-sidebar-foreground/50 font-mono">agent · ready</span>
+          <span className="text-[11px] text-sidebar-foreground/50 font-mono">pipeline · ready</span>
         </div>
       </div>
     </aside>

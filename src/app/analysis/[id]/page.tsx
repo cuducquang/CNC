@@ -501,7 +501,7 @@ export default function AnalysisDetailPage() {
           <TabsTrigger value="processes">Processes ({processes.length})</TabsTrigger>
           <TabsTrigger value="dimensions">Dimensions &amp; GD&amp;T</TabsTrigger>
           {agentLog.length > 0 && (
-            <TabsTrigger value="activity">Agent Activity ({agentLog.length})</TabsTrigger>
+            <TabsTrigger value="activity">Activity ({agentLog.length})</TabsTrigger>
           )}
         </TabsList>
 

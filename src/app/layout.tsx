@@ -18,8 +18,8 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CNC Costing AI | Agentic Manufacturing Intelligence",
-  description: "AI-powered CNC machined part costing with agentic pipeline orchestration",
+  title: "CNC Costing AI | AI-Powered Manufacturing",
+  description: "AI-powered CNC part costing and manufacturing analysis",
   icons: {
     icon: "/favicon.svg",
   },
