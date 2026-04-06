@@ -249,12 +249,13 @@ export async function collectOllamaVisionChat(
     // uncertain about a GD&T symbol. 0.15 breaks loops while keeping JSON structure stable.
     temperature: 0.15,
     // Break repetitive loops in the thinking stream.
-    repetition_penalty: 1.05,
-    // 16384 tokens total (thinking + answer). Per-page JSON answer needs ~2k tokens max;
-    // the remaining ~14k is available for thinking. Keeping this lower forces the model
+    // 1.05 was insufficient for this model on ambiguous GD&T symbols — bumped to 1.12.
+    repetition_penalty: 1.12,
+    // 12288 tokens total (thinking + answer). Per-page JSON answer needs ~2k tokens max;
+    // the remaining ~10k is available for thinking. Keeping this lower forces the model
     // to conclude faster and prevents runaway thinking loops.
-    max_tokens: 16384,
-    chat_template_kwargs: { enable_thinking: true, thinking_budget_tokens: 8000 },
+    max_tokens: 12288,
+    chat_template_kwargs: { enable_thinking: true, thinking_budget_tokens: 6000 },
     // Required so the </think> boundary token is visible in delta.content,
     // allowing the streaming code to separate thinking from the answer.
     skip_special_tokens: false,
