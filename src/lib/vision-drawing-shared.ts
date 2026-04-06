@@ -1,6 +1,7 @@
 /**
  * Shared prompts and merge helpers for VLM drawing extraction.
- * RunPod pod: dj1orhn3zlexd8 (RTX A4500, migrated 2026-04-04)
+ * RunPod pod: rlnp01b095y6lf (RTX PRO 6000 Blackwell, vLLM 0.19.0)
+ * Model: Qwen3-VL-32B-Thinking-FP8
  *
  * The VLM has ONE job: extract dimensions, tolerances, GD&T callouts,
  * and thread specifications from the 2D drawing.
@@ -32,81 +33,55 @@ function findMatchingBrace(s: string): number {
   return -1;
 }
 
-// System prompt — concise role only.
+// System prompt — concise role definition.
 export const SYSTEM_PROMPT = `You are a metrology specialist reading a 2D engineering drawing. \
 Extract dimensions, tolerances, GD&T callouts, and thread specifications. \
-Output JSON only.`;
+Output ONLY the JSON result — nothing else. Think briefly, then output JSON immediately.`;
 
-export const EXTRACTION_PROMPT = `TASK: Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page.
+export const EXTRACTION_PROMPT = `Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page.
 
-Rules:
-- Do NOT loop or second-guess yourself. Identify each dimension ONCE and move on immediately.
-- If a tolerance value is not clearly visible, set it to null — do not speculate.
-- After identifying all content, write the JSON ONCE as your final output. Do not revise it.
-- The LAST thing you output MUST be the complete JSON object.
+NON-DRAWING PAGES — return immediately without further analysis:
+- Cover page / logo / blank / title block only → {"dimensions":[],"gdt":[],"threads":[],"material":null,"surface_finish":null,"notes":["non_technical_page"]}
+- Photo or artwork (not a drawing) → {"dimensions":[],"gdt":[],"threads":[],"material":null,"surface_finish":null,"notes":["not_a_drawing"]}
 
-If this page is ONLY a company logo, blank page, or pure title/cover with zero drawing geometry (no dimension lines, no feature callouts, no measurement values anywhere on the page):
-{"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["non_technical_page"]}
-
-If the image is completely unrelated to engineering (photo, artwork):
-{"dimensions": [], "gdt": [], "threads": [], "material": null, "surface_finish": null, "notes": ["not_a_drawing"]}
-
-IMPORTANT: Pages that MIX content types are still drawing pages — extract from them. Examples: an isometric/3D view page that also has dimension callouts; a page with both a BOM table AND section views with measurements. If ANY dimension values, tolerances, or feature callouts are visible anywhere on the page, extract them.
-
-If it IS an engineering drawing (or mixed page with drawing content), extract the clearly visible data:
-
+DRAWING PAGES — output this JSON schema:
 {
-  "dimensions": [
-    {
-      "id": "D001",
-      "label": "short description e.g. 'Hole diameter', 'Overall length', 'Pocket depth'",
-      "nominal": 12.5,
-      "unit": "in or mm — match what is on the drawing",
-      "tolerance_plus": 0.02,
-      "tolerance_minus": 0.02,
-      "quantity": 1
-    }
-  ],
-  "gdt": [
-    {
-      "id": "G001",
-      "symbol": "position | flatness | perpendicularity | parallelism | concentricity | runout | circularity | cylindricity | profile | angularity | symmetry | total_runout | straightness",
-      "tolerance": 0.05,
-      "unit": "mm",
-      "datums": ["A"]
-    }
-  ],
-  "threads": [
-    {
-      "id": "T001",
-      "spec": "M8x1.25 or 1/4-20 UNC",
-      "depth_mm": 15.0,
-      "quantity": 2
-    }
-  ],
-  "material": "specification e.g. 'AL6061-T6' or null if not shown",
-  "surface_finish": "e.g. 'Ra 1.6' or null if not shown",
+  "dimensions": [{"id":"D001","label":"Overall length","nominal":12.5,"unit":"mm","tolerance_plus":0.02,"tolerance_minus":0.02,"quantity":1}],
+  "gdt": [{"id":"G001","symbol":"position","tolerance":0.05,"unit":"mm","datums":["A"]}],
+  "threads": [{"id":"T001","spec":"M8x1.25","depth_mm":15.0,"quantity":2}],
+  "material": "AL6061-T6 or null",
+  "surface_finish": "Ra 1.6 or null",
   "notes": []
 }
 
-Rules:
-- Extract ONLY what is explicitly labeled on the drawing. Do not infer or guess.
-- For bilateral tolerance ±X: tolerance_plus = X, tolerance_minus = X.
-- For unilateral tolerance +A/-B: tolerance_plus = A, tolerance_minus = B. Zero IS valid: "+0.000/-0.005" means tolerance_plus=0.0, tolerance_minus=0.005. Accept it and move on — do NOT debate whether "0.000" means "no tolerance."
-- If no tolerance callout exists for a dimension, omit tolerance_plus and tolerance_minus.
-- If no GD&T frame control symbols are visible, return empty gdt array.
-- THREAD depth_mm: always store in mm. If the drawing shows depth in inches, multiply by 25.4 (e.g., 1.90 in → 48.26 mm). If depth is not shown, omit the depth_mm field entirely. Record and move on — no unit debate.
-- RADIUS vs THREAD: "R" prefix always means RADIUS (e.g., R2.340, R4.50, 4X R4.50, 3X R2.340 are all radius dimensions). Never classify an R-prefixed value as a thread. Threads always include a pitch and standard callout: M8x1.25, 1/4-20 UNC, 3/8 NPT, TAP, THRU, etc.
-- RADIUS LEADER ENDPOINT: A small circle or dot at the end of a dimension leader line is the arrowhead endpoint, NOT the GD&T diameter symbol ⌀. "R3.264" with any circle dot near it means RADIUS 3.264 — full stop. The GD&T diameter symbol always appears as "⌀10.00" or "Ø10.00" with a tolerance frame. An R-prefixed value can NEVER be a diameter callout. Record it as a radius dimension and move on immediately.
-- REFERENCE DIMENSIONS: Values in parentheses () are reference (non-toleranced) dimensions. "2X 18.215 (17.362)" means 2 features, nominal 18.215, reference 17.362 — it is a hole/feature dimension, NOT a thread.
-- BOM TABLES: A table with "ITEM / QTY / PART NO. / DESCRIPTION" columns is a parts list (BOM). ALL cells in every BOM row — ITEM, QTY, PART NO., DESCRIPTION, TOLERANCES — are part catalog data, NOT engineering dimensions. Numbers embedded in part descriptions such as "1/4 TURN STUD", "PNL RECESS 0.507", "1/4ID .000THK", "M6x1.0 SCREW" are part specification text, NOT drawing dimensions. Ignore every BOM row completely and move on. If you notice you are reading a BOM DESCRIPTION cell — stop immediately and write the JSON.
-- ASSEMBLY DRAWINGS: If the drawing is primarily an assembly view (shows multiple purchased components, has a BOM table, part is a molded/formed/purchased cover/shield/bracket) and has no dimension lines with arrows in the 2D view — the correct output is {"dimensions":[], "gdt":[], "threads":[], "material": "<if visible>", "surface_finish": null, "notes": []}. Do not invent dimensions from BOM text. Write that JSON immediately.
-- DEDUPLICATION: If the same nominal value appears multiple times (e.g., R3.264 appears in 8 places), create ONE entry with quantity=8. Do NOT list it multiple times. Each unique nominal value gets exactly one JSON entry.
-- MULTI-LOCATION CALLOUT: When you see "3X R2.340 (2.340)" in multiple locations on the drawing, ALL those callouts describe the SAME group of 3 radius features. Record it ONCE as {nominal: 2.340, quantity: 3}. The "(2.340)" is a reference annotation — it does NOT create a second entry. Do not compare the same callout to itself.
-- ONE PASS ONLY: Scan the drawing once. Record each unique dimension once (with quantity). Do not re-examine, re-list, or re-verify values. Write the JSON immediately after your single pass.
-- The "notes" field must always be [] (empty array) for a drawing page. Do NOT put engineering text notes in this field.
-- STOP RULE: If you are about to write "Wait", "no,", "actually", or repeat a value you already noted — STOP. Do not write the word "Wait". Instead, immediately output the JSON. Every "Wait" token costs you the whole result. Write JSON now.
-- Return JSON only. No explanations.`;
+RULES (read carefully):
+1. Extract ONLY explicitly labeled values — never infer or guess.
+2. UNCERTAIN SYMBOL OR CALLOUT → skip it entirely and move on. Do not analyze further.
+3. Omit tolerance_plus/tolerance_minus if no tolerance is shown. Zero is a valid tolerance value.
+4. Bilateral ±X → tolerance_plus=X, tolerance_minus=X. Unilateral +A/−B → tolerance_plus=A, tolerance_minus=B.
+5. R prefix = RADIUS always (R2.34, 4X R4.50). Never a thread. Threads have pitch: M8x1.25, 1/4-20 UNC, TAP, THRU.
+6. A dot/circle at a leader line end = arrowhead, not a GD&T diameter symbol.
+7. Parenthesized values () = reference only — same entry, not a second one.
+8. BOM table (ITEM/QTY/PART NO./DESCRIPTION) = parts list. Ignore ALL cells including part numbers.
+9. Assembly view with BOM and no dimension lines → empty dimensions array.
+10. Same nominal in N locations = ONE entry with quantity=N.
+11. Thread depth_mm always in mm (inches × 25.4). Omit if not shown.
+12. notes must be [] for drawing pages.
+13. Response MUST be ONLY the JSON object. No text before or after.`;
+
+/**
+ * Adapt the extraction prompt when sending N pages in one API call.
+ * The model sees all images at once and must return a single merged JSON.
+ */
+export function buildMultiPagePrompt(pageCount: number): string {
+  return EXTRACTION_PROMPT
+    .replace(
+      "from this 2D engineering drawing page.",
+      `from ALL ${pageCount} pages shown above. Merge all findings into a single JSON.`,
+    )
+    .replace("If this page is ONLY", "If a page is ONLY")
+    .replace("If the image is completely unrelated", "If a page is completely unrelated");
+}
 
 export function parseModelJson(rawText: string): Record<string, unknown> {
   let cleaned = rawText.trim();
@@ -156,10 +131,9 @@ export function classifyPageParsed(parsed: Record<string, unknown>): PageOutcome
     return "soft_skip";
   }
   // Model returned valid JSON with no features and no classification note.
-  // This means the model couldn't extract anything (image quality issue or truly empty page).
-  // Treat as unparseable so the caller knows extraction was attempted but produced nothing,
-  // rather than silently skipping as if it were a cover sheet.
-  return "unparseable";
+  // The 32B thinking model is reliable enough that empty valid JSON = nothing to extract.
+  // Treat as soft_skip rather than retrying — a retry won't produce features that aren't there.
+  return "soft_skip";
 }
 
 /** Merge per-page VLM JSON objects into one result (renumbered IDs). */

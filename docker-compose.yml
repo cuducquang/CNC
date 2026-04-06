@@ -43,11 +43,8 @@ services:
       # Internal service wiring — hardcoded, not in .env.local
       # (inside Docker, python-service resolves via Docker DNS, not localhost)
       PYTHON_SERVICE_URL: http://python-service:8001
-      # LOCAL_OLLAMA_URL and VISION_TIMEOUT_MS come from .env.local
-      # (currently pointing to RunPod: https://xfytmq5q4g3twd-11434.proxy.runpod.net)
-      # To switch to local Ollama: update LOCAL_OLLAMA_URL in .env.local
+      # LOCAL_OLLAMA_URL, VISION_MODEL, VISION_TIMEOUT_MS come from .env.local
+      # (pointing to RunPod vLLM: https://rlnp01b095y6lf-11434.proxy.runpod.net)
       # Vision-call runtime controls
-      # Rasterize up to 4 pages — all are tried, results merged.
-      # Pages are processed one at a time (sequential) to avoid VRAM overload on small models.
       PDF_MAX_PAGES_FOR_VISION: "4"
       VISION_PAGE_CONCURRENCY: "1"

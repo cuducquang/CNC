@@ -200,31 +200,29 @@ export async function POST(request: NextRequest) {
         // agentModelUrl not needed — fallback pipeline resolves URL via LOCAL_OLLAMA_URL env var
         const agentModelUrl = undefined;
 
-        // ── Log model selection + verify Ollama is reachable ───────────────
+        // ── Log model selection + verify vLLM is reachable ────────────────
         const resolvedConfig = getAgentConfig(agentModel, agentModelUrl);
         console.log(
           `[Agent] model=${resolvedConfig.agentModelName} url=${resolvedConfig.agentModelUrl} analysis_id=${analysis_id}`,
         );
         try {
-          const pingRes = await fetch(`${resolvedConfig.agentModelUrl}/api/tags`, {
+          const pingRes = await fetch(`${resolvedConfig.agentModelUrl}/v1/models`, {
             signal: AbortSignal.timeout(5_000),
           });
           if (pingRes.ok) {
-            const tags = await pingRes.json();
-            const available = ((tags.models || []) as any[]).map((m: any) => m.name).join(", ");
-            const found = ((tags.models || []) as any[]).some(
-              (m: any) => m.name === resolvedConfig.agentModelName || m.model === resolvedConfig.agentModelName,
-            );
-            console.log(`[Agent] Ollama reachable — models: [${available || "none"}] — selected model found: ${found}`);
+            const data = await pingRes.json();
+            const available = ((data.data || []) as any[]).map((m: any) => m.id).join(", ");
+            const found = ((data.data || []) as any[]).some((m: any) => m.id === resolvedConfig.agentModelName);
+            console.log(`[Agent] vLLM reachable — models: [${available || "none"}] — selected model found: ${found}`);
             if (!found) {
-              console.warn(`[Agent] WARNING: "${resolvedConfig.agentModelName}" not in Ollama model list — pipeline will fail`);
+              console.warn(`[Agent] WARNING: "${resolvedConfig.agentModelName}" not in vLLM model list — pipeline will fail`);
             }
           } else {
-            console.warn(`[Agent] Ollama ping HTTP ${pingRes.status} at ${resolvedConfig.agentModelUrl}`);
+            console.warn(`[Agent] vLLM ping HTTP ${pingRes.status} at ${resolvedConfig.agentModelUrl}`);
           }
         } catch (pingErr) {
           console.error(
-            `[Agent] Cannot reach Ollama at ${resolvedConfig.agentModelUrl}: ${pingErr instanceof Error ? pingErr.message : pingErr}`,
+            `[Agent] Cannot reach vLLM at ${resolvedConfig.agentModelUrl}: ${pingErr instanceof Error ? pingErr.message : pingErr}`,
           );
         }
 
@@ -239,7 +237,6 @@ export async function POST(request: NextRequest) {
           onVlmThinking: (chunk: string) => send("thinking", { content: chunk }),
         };
 
-        // Small local models (4B–8B) cannot reliably do multi-step tool orchestration.
         // Always run the deterministic pipeline — correct order guaranteed, no LLM guessing.
         try {
           for await (const event of runFallbackPipeline(agentParams)) {

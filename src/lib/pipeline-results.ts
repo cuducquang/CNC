@@ -1,5 +1,5 @@
 /**
- * Pipeline results builder — shared by orchestrator.ts and fallback-pipeline.ts.
+ * Pipeline results builder — used by fallback-pipeline.ts.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */

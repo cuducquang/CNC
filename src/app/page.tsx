@@ -347,44 +347,48 @@ export default function HomePage() {
 
   if (!showStream) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-8 py-2">
         {/* Hero */}
-        <div className="text-center space-y-3 pt-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 border border-primary/20 px-3.5 py-1 text-[12px]">
+        <div className="text-center space-y-4 pt-4">
+          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 border border-primary/20 px-4 py-1.5 text-[11.5px]">
             <Sparkles className="w-3 h-3 text-primary" />
-            <span className="font-medium text-primary/80">AI Pipeline</span>
+            <span className="font-semibold text-primary/90 tracking-wide uppercase">AI Pipeline</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">CNC Part Costing Automation</h1>
-          <p className="text-[13px] text-muted-foreground max-w-xl mx-auto leading-relaxed">
-            Upload your engineering drawings and CAD files. The AI automatically extracts features,
-            maps CNC processes, and calculates fabrication cost.
-          </p>
+          <div className="space-y-3">
+            <h1 className="text-4xl font-bold tracking-tight text-foreground leading-tight">
+              CNC Part Costing<br className="hidden sm:block" /> Automation
+            </h1>
+            <p className="text-[14.5px] text-muted-foreground max-w-lg mx-auto leading-relaxed">
+              Upload your engineering drawings and CAD files. The AI extracts features,
+              maps CNC operations, and delivers a precise fabrication cost estimate.
+            </p>
+          </div>
         </div>
 
-        {/* Pipeline visualization */}
-        <div className="flex items-center justify-center gap-1 flex-wrap">
+        {/* Pipeline stepper */}
+        <div className="flex items-center justify-center gap-1.5 flex-wrap">
           {PIPELINE_STEPS.map((step, i) => (
-            <div key={step.label} className="flex items-center gap-1">
-              <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1">
-                <step.icon className="w-3 h-3 text-muted-foreground/50" />
-                <span className="text-[11px] font-medium text-muted-foreground/70">{step.label}</span>
+            <div key={step.label} className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 shadow-[0_1px_2px_0_rgb(0,0,0,0.04)]">
+                <step.icon className="w-3 h-3 text-muted-foreground/40" />
+                <span className="text-[11px] font-semibold text-muted-foreground/60 tracking-wide">{step.label}</span>
               </div>
               {i < PIPELINE_STEPS.length - 1 && (
-                <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/25" />
+                <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/20" />
               )}
             </div>
           ))}
         </div>
 
         {/* Upload card */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Upload Files</CardTitle>
-            <CardDescription>
+        <Card className="shadow-[0_2px_12px_0_rgb(0,0,0,0.06)] border-border/80">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-base">Upload Files</CardTitle>
+            <CardDescription className="text-[13px]">
               Both files are required. The STEP file provides 3D geometry; the drawing provides GD&amp;T, tolerances, and material specification.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FileDropzone
                 label="3D CAD File"
@@ -407,7 +411,7 @@ export default function HomePage() {
             </div>
 
             {error && (
-              <div className="bg-red-500/8 border border-red-500/20 text-red-400 rounded-lg p-3 text-sm">
+              <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl p-3.5 text-[13px] leading-snug">
                 {error}
               </div>
             )}
@@ -415,7 +419,7 @@ export default function HomePage() {
             <Button
               onClick={handleAnalyze}
               disabled={loading || !file2d || !file3d}
-              className="w-full h-11"
+              className="w-full h-12 text-[14px] font-semibold rounded-xl shadow-[0_1px_3px_0_rgb(0,0,0,0.12)] hover:shadow-[0_3px_8px_0_rgb(0,0,0,0.15)] transition-shadow"
               size="lg"
             >
               {loading ? (
@@ -433,17 +437,34 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        {/* Features info */}
+        {/* Feature highlights */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
-            { title: "AI Vision", desc: "Vision AI reads your engineering drawings and extracts features, GD&T, and tolerances automatically." },
-            { title: "Vision + Tools", desc: "Vision AI for drawing extraction paired with specialized manufacturing analysis tools." },
-            { title: "Real-time Stream", desc: "Watch the pipeline process your files and build your cost estimate in real-time." },
+            {
+              icon: Eye,
+              title: "AI Vision",
+              desc: "Qwen3-VL-32B reads engineering drawings and extracts all dimensions, GD&T callouts, and tolerances.",
+            },
+            {
+              icon: Layers,
+              title: "3D + 2D Fusion",
+              desc: "FreeCAD parses the STEP file and merges 3D geometry with 2D drawing data for complete feature recognition.",
+            },
+            {
+              icon: DollarSign,
+              title: "Live Cost Stream",
+              desc: "Watch the 6-step pipeline run in real time. Cycle time and cost estimate delivered automatically.",
+            },
           ].map((f) => (
-            <Card key={f.title} className="py-4">
-              <CardContent className="px-4">
-                <div className="text-[12px] font-semibold text-foreground/80">{f.title}</div>
-                <div className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{f.desc}</div>
+            <Card key={f.title} className="py-5 shadow-[0_1px_3px_0_rgb(0,0,0,0.05)]">
+              <CardContent className="px-5 flex items-start gap-3">
+                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/10 shrink-0 mt-0.5">
+                  <f.icon className="w-3.5 h-3.5 text-primary" />
+                </div>
+                <div>
+                  <div className="text-[13px] font-semibold text-foreground/90 mb-1">{f.title}</div>
+                  <div className="text-[11.5px] text-muted-foreground leading-relaxed">{f.desc}</div>
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -461,32 +482,32 @@ export default function HomePage() {
       {/* Header bar */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">
+          <h2 className="text-xl font-bold tracking-tight">
             {pipelineDone
               ? "Analysis Complete"
               : hasError && !isStreaming
                 ? "Analysis Failed"
-                : "Analysis"}
+                : "Running Analysis"}
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[12.5px] text-muted-foreground mt-0.5 font-mono truncate max-w-sm">
             {[file3d?.name, file2d?.name].filter(Boolean).join(" + ") || "Processing..."}
           </p>
         </div>
         <div className="flex items-center gap-2">
           {isStreaming && (
-            <Button variant="destructive" size="sm" onClick={handleCancel}>
+            <Button variant="destructive" size="sm" className="rounded-lg" onClick={handleCancel}>
               <X className="w-3.5 h-3.5" />
               Stop
             </Button>
           )}
           {pipelineDone && analysisId && (
-            <Button size="sm" onClick={() => router.push(`/analysis/${analysisId}`)}>
+            <Button size="sm" className="rounded-lg" onClick={() => router.push(`/analysis/${analysisId}`)}>
               View Details
               <ArrowRight className="w-3.5 h-3.5" />
             </Button>
           )}
           {(pipelineDone || (hasError && !isStreaming)) && (
-            <Button variant="outline" size="sm" onClick={handleReset}>
+            <Button variant="outline" size="sm" className="rounded-lg" onClick={handleReset}>
               <Plus className="w-3.5 h-3.5" />
               New Analysis
             </Button>
@@ -495,21 +516,21 @@ export default function HomePage() {
       </div>
 
       {/* Pipeline progress */}
-      <div className="flex items-center gap-1 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         {PIPELINE_STEPS.map((step, i) => {
-          const isDone = completedTools.has(step.tool);
+          const isDone   = completedTools.has(step.tool);
           const isActive = activeTool === step.tool;
           return (
-            <div key={step.label} className="flex items-center gap-1">
-              <div className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 border transition-all ${
+            <div key={step.label} className="flex items-center gap-1.5">
+              <div className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 border text-[11px] font-semibold transition-all ${
                 isDone
-                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                   : isActive
-                    ? "bg-primary/10 border-primary/20 text-primary animate-pulse"
-                    : "bg-card border-border text-muted-foreground/60"
+                    ? "bg-primary/8 border-primary/25 text-primary animate-pulse"
+                    : "bg-card border-border text-muted-foreground/50"
               }`}>
                 <step.icon className="w-3 h-3" />
-                <span className="text-[11px] font-medium">{step.label}</span>
+                <span>{step.label}</span>
               </div>
               {i < PIPELINE_STEPS.length - 1 && (
                 <ArrowRight className="w-2.5 h-2.5 text-muted-foreground/20" />
@@ -525,13 +546,17 @@ export default function HomePage() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Agent stream (left - wider) */}
         <div className="lg:col-span-3">
-          <Card className="py-0 overflow-hidden bg-card border-border rounded-xl">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-muted/20">
-              <Bot className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium flex-1">Pipeline Activity</span>
-              {isStreaming && <Badge variant="info" className="text-[10px]">Live</Badge>}
+          <Card className="py-0 overflow-hidden border-border rounded-xl shadow-[0_2px_8px_0_rgb(0,0,0,0.05)]">
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border bg-muted/15">
+              <div className="flex items-center justify-center w-6 h-6 rounded-md bg-primary/12">
+                <Bot className="w-3.5 h-3.5 text-primary" />
+              </div>
+              <span className="text-[13px] font-semibold flex-1">Pipeline Activity</span>
+              {isStreaming && (
+                <Badge variant="info" className="text-[10px] rounded-full px-2.5">Live</Badge>
+              )}
             </div>
-            <div className="h-[500px]">
+            <div className="h-[520px]">
               <AgentStream
                 messages={messages}
                 liveThinking={liveThinking}
@@ -543,21 +568,25 @@ export default function HomePage() {
 
         {/* Results panel (right - narrower) */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Summary mini-cards */}
+          {/* Summary metric cards */}
           {results && (
             <div className="grid grid-cols-2 gap-3">
-              <Card className="py-4 border-cyan-500/20 bg-cyan-500/8">
-                <CardContent className="px-3 text-center">
-                  <Timer className="w-4 h-4 mx-auto text-cyan-400 mb-1.5" />
-                  <div className="text-xl font-bold font-mono text-cyan-400">{(results.total_minutes as number)?.toFixed(1)}</div>
-                  <div className="text-[10px] text-cyan-400/60 font-mono">min</div>
+              <Card className="py-5 border-cyan-200 bg-gradient-to-br from-cyan-50 to-sky-50 shadow-[0_1px_3px_0_rgb(0,0,0,0.05)]">
+                <CardContent className="px-4 text-center">
+                  <Timer className="w-4 h-4 mx-auto text-cyan-500 mb-2" />
+                  <div className="text-2xl font-bold font-mono text-cyan-600">
+                    {(results.total_minutes as number)?.toFixed(1)}
+                  </div>
+                  <div className="text-[10px] text-cyan-500/70 font-mono font-semibold uppercase tracking-wide mt-0.5">min</div>
                 </CardContent>
               </Card>
-              <Card className="py-4 border-emerald-500/20 bg-emerald-500/8">
-                <CardContent className="px-3 text-center">
-                  <DollarSign className="w-4 h-4 mx-auto text-emerald-400 mb-1.5" />
-                  <div className="text-xl font-bold font-mono text-emerald-400">${(results.total_usd as number)?.toFixed(2)}</div>
-                  <div className="text-[10px] text-emerald-400/60 font-mono">USD</div>
+              <Card className="py-5 border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50 shadow-[0_1px_3px_0_rgb(0,0,0,0.05)]">
+                <CardContent className="px-4 text-center">
+                  <DollarSign className="w-4 h-4 mx-auto text-emerald-500 mb-2" />
+                  <div className="text-2xl font-bold font-mono text-emerald-600">
+                    ${(results.total_usd as number)?.toFixed(2)}
+                  </div>
+                  <div className="text-[10px] text-emerald-500/70 font-mono font-semibold uppercase tracking-wide mt-0.5">USD</div>
                 </CardContent>
               </Card>
             </div>
@@ -583,20 +612,20 @@ export default function HomePage() {
           )}
 
           {!results && !isStreaming && (pipelineDone || hasError) && (
-            <Card className="py-8">
-              <CardContent className="text-center text-sm text-muted-foreground">
+            <Card className="py-10 shadow-[0_1px_3px_0_rgb(0,0,0,0.04)]">
+              <CardContent className="text-center text-[13px] text-muted-foreground">
                 {hasError
-                  ? "Analysis encountered an error. Check the activity log for details."
+                  ? "Analysis encountered an error. Check the activity log."
                   : "No results available."}
               </CardContent>
             </Card>
           )}
 
           {!results && isStreaming && (
-            <Card className="py-8">
-              <CardContent className="text-center text-sm text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-primary" />
-                Waiting for results...
+            <Card className="py-10 shadow-[0_1px_3px_0_rgb(0,0,0,0.04)]">
+              <CardContent className="text-center">
+                <Loader2 className="w-5 h-5 animate-spin mx-auto mb-3 text-primary/60" />
+                <div className="text-[13px] text-muted-foreground">Waiting for results...</div>
               </CardContent>
             </Card>
           )}

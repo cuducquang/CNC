@@ -4,7 +4,7 @@
  * Each tool file owns its schema + handler.
  * This file aggregates them and exports:
  *   - TOOL_DEFINITIONS  → passed to the model on every chat call
- *   - executeToolCall() → called by orchestrator when the model picks a tool
+ *   - executeToolCall() → called by the pipeline when a tool is selected
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
