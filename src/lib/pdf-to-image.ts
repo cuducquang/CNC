@@ -188,7 +188,17 @@ async function pdfViaPythonService(pdfBuffer: Buffer): Promise<string[]> {
   if (!Array.isArray(json.pages) || json.pages.length === 0) {
     throw new Error("Python service returned no pages");
   }
-  return json.pages;
+  // Python service renders at 96 DPI (no cap). Apply the same MAX_LONG_PX cap used
+  // by the local pdftoppm path so the VLM receives ~15 tiles instead of ~40 tiles.
+  const capped = await Promise.all(
+    json.pages.map(async (p) => {
+      const buf = Buffer.from(p, "base64");
+      const resized = await capLongSide(buf, MAX_LONG_PX);
+      return resized.toString("base64");
+    }),
+  );
+  console.log(`[pdf-to-image] Python service: capped ${json.pages.length} page(s) to ${MAX_LONG_PX}px`);
+  return capped;
 }
 
 /**

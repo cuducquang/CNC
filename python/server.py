@@ -1,12 +1,14 @@
 """
 CNCapp Python microservice — FastAPI server.
 
-Deterministic pipeline:
-  POST /analyze       Full analysis: STEP feature recognition + process mapping
-                       (accepts drawing_extraction JSON from VLM step in Next.js)
-  POST /analyze/step  STEP-only feature recognition (geometry, no process map)
-  POST /convert-pdf   PDF → PNG base64 pages via pdftoppm
-  GET  /health        Health check (FreeCAD availability)
+Endpoints:
+  POST /analyze-stream SSE streaming pipeline (new primary endpoint)
+                       Browser → Python directly; no Vercel timeout limit.
+  POST /analyze        Full analysis: STEP feature recognition + process mapping
+                       (legacy — kept for compatibility)
+  POST /analyze/step   STEP-only feature recognition (geometry, no process map)
+  POST /convert-pdf    PDF → PNG base64 pages via pdftoppm
+  GET  /health         Health check (FreeCAD availability)
 
 Run:
   py -3.11 -m uvicorn server:app --host 0.0.0.0 --port 8001 --reload
@@ -24,9 +26,9 @@ import os
 import subprocess
 import tempfile
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from freecad_analyzer import (
     STEPAnalyzer,
@@ -75,6 +77,59 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Streaming pipeline  (new primary endpoint — bypasses Vercel timeout)
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze-stream")
+async def analyze_stream(request: Request):
+    """
+    SSE streaming endpoint for the full 6-step CNC costing pipeline.
+
+    Request body (JSON):
+      analysis_id  : str  — UUID for tracking
+      drawing_url  : str  — Supabase signed URL for the 2D drawing
+      step_url     : str  — Supabase signed URL for the STEP file
+      file_name    : str  — original filename (used in summary text)
+
+    The browser calls this endpoint DIRECTLY — no Next.js proxy, no timeout limit.
+    Events: status | tool_call | tool_result | thinking | final_answer | error | done
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    analysis_id  = body.get("analysis_id") or "unknown"
+    drawing_url  = body.get("drawing_url") or ""
+    step_url     = body.get("step_url")    or ""
+    file_name    = body.get("file_name")   or "part.stp"
+
+    if not drawing_url or not step_url:
+        raise HTTPException(status_code=400, detail="drawing_url and step_url are required")
+
+    from pipeline import run_pipeline
+
+    async def event_generator():
+        try:
+            async for event_type, data in run_pipeline(analysis_id, drawing_url, step_url, file_name):
+                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+        except Exception as e:
+            logger.exception("Streaming pipeline error")
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'total_minutes': 0, 'total_usd': 0, 'elapsed_seconds': 0})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":      "no-cache, no-transform",
+            "X-Accel-Buffering":  "no",
+            "Connection":         "keep-alive",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

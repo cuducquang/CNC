@@ -12,8 +12,9 @@
 const VISION_TIMEOUT_MS: number | null = (() => {
   const raw = parseInt(process.env.VISION_TIMEOUT_MS || "", 10);
   if (!isNaN(raw) && raw >= 0) return raw === 0 ? null : raw;
-  // Auto: tight budget on Vercel, no cap locally.
-  return process.env.VERCEL === "1" ? 60_000 : null;
+  // No per-page cap — rely on the 30s inactivity watchdog instead.
+  // Pages run in parallel; the slowest finishes in ~120s, well within the 300s function limit.
+  return null;
 })();
 
 function buildCandidateBaseUrls(rawBaseUrl: string): string[] {

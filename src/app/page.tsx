@@ -96,7 +96,11 @@ export default function HomePage() {
   // Final results
   const [results, setResults] = useState<Record<string, any> | null>(null);
 
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRef          = useRef<AbortController | null>(null);
+  // Refs used to persist results after the `done` SSE event
+  const finalResultsRef   = useRef<Record<string, any> | null>(null);
+  const finalSummaryRef   = useRef<string>("");
+  const uploadResultRef   = useRef<Record<string, any> | null>(null);
 
   const addMsg = (type: string, data: Record<string, unknown>) => {
     setMessages((prev) => [...prev, {
@@ -171,9 +175,20 @@ export default function HomePage() {
       }
 
       const uploadResult = await registerRes.json();
+      uploadResultRef.current = uploadResult;
       setAnalysisId(uploadResult.analysis_id);
 
-      // Start agent SSE stream
+      // Create signed URLs so Python can download the files directly from Supabase.
+      // This avoids passing file bytes through any server — Supabase → Python directly.
+      const [sign3d, sign2d] = await Promise.all([
+        sbClient.storage.from("parts").createSignedUrl(file3dPath, 3600),
+        sbClient.storage.from("parts").createSignedUrl(file2dPath, 3600),
+      ]);
+      if (sign3d.error) throw new Error(`Signed URL for 3D failed: ${sign3d.error.message}`);
+      if (sign2d.error) throw new Error(`Signed URL for 2D failed: ${sign2d.error.message}`);
+
+      // Start Python pipeline SSE stream — browser calls Python directly.
+      // This completely bypasses Vercel's 300 s serverless limit.
       setLoading(false);
       setIsStreaming(true);
 
@@ -182,10 +197,16 @@ export default function HomePage() {
 
       let localThinking = "";
 
-      const resp = await fetch("/api/agent", {
+      const pythonUrl = (process.env.NEXT_PUBLIC_PYTHON_SERVICE_URL || "http://localhost:8001").replace(/\/$/, "");
+      const resp = await fetch(`${pythonUrl}/analyze-stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysis_id: uploadResult.analysis_id }),
+        body: JSON.stringify({
+          analysis_id: uploadResult.analysis_id,
+          drawing_url: sign2d.data!.signedUrl,
+          step_url:    sign3d.data!.signedUrl,
+          file_name:   file3d.name,
+        }),
         signal: controller.signal,
       });
 
@@ -310,12 +331,26 @@ export default function HomePage() {
                   localThinking = "";
                 }
                 setResults(parsed.results || null);
+                finalResultsRef.current = parsed.results || null;
+                finalSummaryRef.current = parsed.summary || "";
                 addMsg("final_answer", parsed);
                 break;
 
               case "done":
                 addMsg("done", parsed);
                 setPipelineDone(true);
+                // Persist results to Supabase via Next.js (has service-role key)
+                if (uploadResultRef.current?.analysis_id && finalResultsRef.current) {
+                  fetch("/api/save-result", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      analysis_id: uploadResultRef.current.analysis_id,
+                      results:     finalResultsRef.current,
+                      summary:     finalSummaryRef.current || "",
+                    }),
+                  }).catch((e) => console.warn("[save-result] failed:", e));
+                }
                 break;
 
               case "error":
@@ -365,6 +400,9 @@ export default function HomePage() {
     setFile3d(null);
     setFile2d(null);
     setError(null);
+    finalResultsRef.current  = null;
+    finalSummaryRef.current  = "";
+    uploadResultRef.current  = null;
   };
 
   const showStream = isStreaming || messages.length > 0;
