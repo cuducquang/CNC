@@ -45,7 +45,43 @@ const STATUS_BADGE: Record<string, { variant: "success" | "destructive" | "warni
   pending:   { variant: "secondary",   label: "Pending"   },
 };
 
-const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#f97316", "#06b6d4", "#ec4899"];
+const CHART_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#f97316", "#06b6d4", "#ec4899", "#84cc16", "#f43f5e", "#a855f7"];
+
+/**
+ * Group flat operation items by their type family (text before the first " - " or " (").
+ * Each unique family becomes one bar/slice with summed value and a ×N count label.
+ * Caps at maxGroups: if more families exist, the smallest ones are merged into "Other".
+ */
+function groupByFamily(
+  items: { name: string; value: number }[],
+  maxGroups = 9,
+): { name: string; value: number; count: number }[] {
+  const map: Record<string, { value: number; count: number }> = {};
+  for (const item of items) {
+    // Extract family: "Center Drill - Blind hole - ..." → "Center Drill"
+    //                 "Raw Material"                   → "Raw Material"
+    //                 "Tool Changes (4x)"              → "Tool Changes"
+    const family = item.name.split(" - ")[0].split(" (")[0].trim() || item.name;
+    if (!map[family]) map[family] = { value: 0, count: 0 };
+    map[family].value  += item.value;
+    map[family].count  += 1;
+  }
+
+  const sorted = Object.entries(map)
+    .map(([name, { value, count }]) => ({ name, value: Math.round(value * 1000) / 1000, count }))
+    .sort((a, b) => b.value - a.value);
+
+  if (sorted.length <= maxGroups) return sorted;
+
+  // Keep top (maxGroups-1), merge the rest into "Other"
+  const top   = sorted.slice(0, maxGroups - 1);
+  const rest  = sorted.slice(maxGroups - 1);
+  const other = rest.reduce(
+    (acc, x) => ({ name: "Other", value: acc.value + x.value, count: acc.count + x.count }),
+    { name: "Other", value: 0, count: 0 },
+  );
+  return [...top, { ...other, value: Math.round(other.value * 1000) / 1000 }];
+}
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_ATTEMPTS = 100; // ~5 minutes — matches Vercel 300s function timeout
@@ -220,18 +256,21 @@ export default function AnalysisDetailPage() {
   const isError = analysis.status === "error";
   const isProcessing = analysis.status === "processing" || analysis.status === "pending";
 
-  // Chart data
-  const costChartData = costItems.map((item: any, i: number) => ({
-    name: item.process || item.label || `Item ${i + 1}`,
+  // Chart data — group by operation family so tiny 0.0x items become visible
+  const costChartRaw = costItems.map((item: any, i: number) => ({
+    name:  item.process || item.label || `Item ${i + 1}`,
     value: item.cost_usd || item.amount_usd || 0,
   }));
+  const costChartData = groupByFamily(costChartRaw);
 
-  const cycleChartData = cycleItems.map((item: any) => ({
-    name: item.process || item.label || "Unknown",
+  const cycleChartRaw = cycleItems.map((item: any) => ({
+    name:  item.process || item.label || "Unknown",
     value: item.time_minutes || item.minutes || 0,
   }));
+  const cycleChartData = groupByFamily(cycleChartRaw);
 
-  const barChartHeight = cycleChartData.length > 4 ? 260 : 180;
+  // 44px per row minimum so bars are never invisible
+  const barChartHeight = Math.max(220, cycleChartData.length * 44);
 
   // KPI card definitions
   const kpiCards = [
@@ -393,9 +432,10 @@ export default function AnalysisDetailPage() {
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        innerRadius={55}
-                        outerRadius={85}
+                        innerRadius={58}
+                        outerRadius={88}
                         paddingAngle={2}
+                        minAngle={4}
                       >
                         {costChartData.map((_: any, index: number) => (
                           <Cell
@@ -404,34 +444,44 @@ export default function AnalysisDetailPage() {
                           />
                         ))}
                       </Pie>
-                      <ChartTooltip
-                        content={<DarkTooltip unit="USD" />}
-                      />
+                      <ChartTooltip content={<DarkTooltip unit="USD" />} />
                     </PieChart>
                   </ResponsiveContainer>
                   {/* Center label */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center">
-                      <div className="text-lg font-bold font-mono text-foreground">
+                      <div className="text-xl font-bold font-mono text-foreground">
                         ${totalUsd.toFixed(0)}
                       </div>
                       <div className="text-[10px] text-muted-foreground font-mono">total</div>
                     </div>
                   </div>
                 </div>
-                {/* Legend */}
-                <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-2 justify-center">
-                  {costChartData.map((item: any, i: number) => (
-                    <div key={item.name} className="flex items-center gap-1.5">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ background: CHART_COLORS[i % CHART_COLORS.length] }}
-                      />
-                      <span className="text-[10px] text-muted-foreground/70 truncate max-w-[100px]">
-                        {item.name}
-                      </span>
-                    </div>
-                  ))}
+                {/* Legend — name + value, one row each */}
+                <div className="space-y-1.5 mt-3">
+                  {costChartData.map((item: any, i: number) => {
+                    const pct = totalUsd > 0 ? (item.value / totalUsd) * 100 : 0;
+                    return (
+                      <div key={item.name} className="flex items-center gap-2">
+                        <span
+                          className="w-2.5 h-2.5 rounded-sm shrink-0"
+                          style={{ background: CHART_COLORS[i % CHART_COLORS.length] }}
+                        />
+                        <span className="text-[11px] text-foreground/70 flex-1 truncate">
+                          {item.name}
+                          {item.count > 1 && (
+                            <span className="text-muted-foreground/50 ml-1">×{item.count}</span>
+                          )}
+                        </span>
+                        <span className="text-[11px] font-mono text-foreground/60 shrink-0">
+                          ${item.value.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/40 font-mono w-9 text-right shrink-0">
+                          {pct.toFixed(0)}%
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -451,12 +501,13 @@ export default function AnalysisDetailPage() {
                   <BarChart
                     data={cycleChartData}
                     layout="vertical"
-                    margin={{ top: 0, right: 16, bottom: 0, left: 0 }}
+                    margin={{ top: 4, right: 48, bottom: 4, left: 0 }}
+                    barCategoryGap="25%"
                   >
                     <CartesianGrid
                       horizontal={false}
-                      stroke="oklch(0.255 0.010 260)"
-                      strokeDasharray="0"
+                      stroke="oklch(0.90 0.005 260)"
+                      strokeDasharray="3 3"
                     />
                     <XAxis
                       type="number"
@@ -468,22 +519,40 @@ export default function AnalysisDetailPage() {
                     <YAxis
                       type="category"
                       dataKey="name"
-                      width={110}
-                      tick={{ fontSize: 10, fill: "oklch(0.54 0.015 260)" }}
+                      width={130}
+                      tick={{ fontSize: 11, fill: "oklch(0.40 0.012 260)" }}
                       tickLine={false}
                       axisLine={false}
-                      tickFormatter={(v: string) => v.length > 18 ? `${v.slice(0, 17)}…` : v}
+                      tickFormatter={(v: string) => {
+                        const base = v.split(" - ")[0].split(" (")[0].trim();
+                        return base.length > 16 ? `${base.slice(0, 15)}…` : base;
+                      }}
                     />
                     <ChartTooltip
                       content={<DarkTooltip unit="min" />}
-                      cursor={{ fill: "oklch(0.255 0.010 260 / 0.4)" }}
+                      cursor={{ fill: "oklch(0.945 0.006 260)" }}
                     />
                     <Bar
                       dataKey="value"
                       name="Minutes"
-                      fill="#f59e0b"
-                      radius={[0, 3, 3, 0]}
-                    />
+                      radius={[0, 4, 4, 0]}
+                      minPointSize={3}
+                      label={{
+                        position: "right",
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter: (v: any) => typeof v === "number" ? (v < 0.1 ? v.toFixed(3) : v.toFixed(2)) : v,
+                        fontSize: 10,
+                        fill: "oklch(0.50 0.015 260)",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
+                      {cycleChartData.map((_: any, index: number) => (
+                        <Cell
+                          key={`bar-${index}`}
+                          fill={CHART_COLORS[index % CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
