@@ -420,8 +420,9 @@ async def run_pipeline(
         all_parsed:   list = []
         all_outcomes: list = []
 
-        # Sequential: one page at a time, stream thinking for each
-        for page_b64 in pages:
+        # Sequential: one page at a time, stream thinking + heartbeats for each
+        for i, page_b64 in enumerate(pages):
+            logger.info("Page %d/%d → VLM (b64_len=%d)", i + 1, len(pages), len(page_b64))
             thinking_queue: asyncio.Queue = asyncio.Queue()
 
             async def _on_thinking(chunk: str, _q: asyncio.Queue = thinking_queue) -> None:
@@ -434,12 +435,17 @@ async def run_pipeline(
 
             page_task = asyncio.create_task(_run_page())
 
+            # Drain thinking queue; send heartbeat every 15s of silence to keep CDN alive
             while True:
-                chunk = await thinking_queue.get()
-                if chunk is None:
-                    break
-                yield "thinking", {"content": chunk}
+                try:
+                    chunk = await asyncio.wait_for(thinking_queue.get(), timeout=15.0)
+                    if chunk is None:
+                        break
+                    yield "thinking", {"content": chunk}
+                except asyncio.TimeoutError:
+                    yield "heartbeat", {}
 
+            logger.info("Page %d/%d done", i + 1, len(pages))
             parsed, outcome = await page_task
             all_parsed.append(parsed)
             all_outcomes.append(outcome)

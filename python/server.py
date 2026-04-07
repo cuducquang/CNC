@@ -124,7 +124,10 @@ async def analyze_stream(request: Request):
     async def event_generator():
         try:
             async for event_type, data in run_pipeline(analysis_id, drawing_url, step_url, file_name):
-                yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                if event_type == "heartbeat":
+                    yield ": heartbeat\n\n"   # SSE comment — keeps CDN/proxy alive, invisible to client
+                else:
+                    yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
         except Exception as e:
             logger.exception("Streaming pipeline error")
             yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
