@@ -61,18 +61,20 @@ export async function POST(request: NextRequest) {
     },
     process_mapping: {
       processes: ((results.processes?.operations || []) as any[]).map((op: any) => ({
-        name: op.label, category: op.operation, description: op.label,
+        name: op.operation, category: op.operation, description: op.note || op.operation,
       })),
     },
     cycle_time: {
-      items:         ((results.cycle_time?.breakdown || []) as any[]).map((b: any) => ({
-        process: b.process, time_minutes: b.minutes,
+      // Approach 1 returns "operations"; Approach 2 may return "breakdown"
+      items: ((results.cycle_time?.operations || results.cycle_time?.breakdown || []) as any[]).map((b: any) => ({
+        process: b.note || b.process || b.operation_id, time_minutes: b.minutes ?? b.time_minutes,
       })),
       total_minutes: results.total_minutes || 0,
     },
     cost_estimation: {
-      items:          ((results.cost?.breakdown || []) as any[]).map((b: any) => ({
-        process: b.line, cost_usd: b.amount_usd,
+      // Approach 1 cost breakdown uses { item, usd }; Approach 2 uses { line, amount_usd }
+      items: ((results.cost?.breakdown || []) as any[]).map((b: any) => ({
+        process: b.item ?? b.line, cost_usd: b.usd ?? b.amount_usd,
       })),
       total_cost_usd: results.total_usd || 0,
     },

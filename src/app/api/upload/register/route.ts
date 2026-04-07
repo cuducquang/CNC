@@ -22,11 +22,12 @@ function ext(filename: string): string {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { analysis_id, file_3d_path, file_2d_path, file_name } = body as {
+    const { analysis_id, file_3d_path, file_2d_path, file_name, approach } = body as {
       analysis_id: string;
       file_3d_path: string;
       file_2d_path: string;
       file_name: string;
+      approach?: 1 | 2;
     };
 
     if (!analysis_id || !file_3d_path || !file_2d_path || !file_name) {
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
         file_3d_path,
         file_2d_path,
         status:       "pending",
+        approach:     approach ?? 2,
       });
 
     if (dbError) throw dbError;

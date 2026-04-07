@@ -24,6 +24,8 @@ import {
   Loader2,
   AlertTriangle,
   RefreshCw,
+  Brain,
+  Cpu,
 } from "lucide-react";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -38,6 +40,7 @@ interface Analysis {
   error_message?: string;
   cycle_time?: { total_minutes: number };
   cost_estimation?: { total_cost_usd: number };
+  approach?: number;
 }
 
 function basename(filePath?: string): string {
@@ -53,16 +56,21 @@ function isStuck(a: Analysis): boolean {
   return Date.now() - new Date(a.created_at).getTime() > STUCK_THRESHOLD_MS;
 }
 
+type ApproachFilter = "all" | "1" | "2";
+
 export default function HistoryPage() {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingStuck, setMarkingStuck] = useState<Set<string>>(new Set());
+  const [approachFilter, setApproachFilter] = useState<ApproachFilter>("all");
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchAnalyses = useCallback(async (silent = false) => {
+  const fetchAnalyses = useCallback(async (silent = false, filter?: ApproachFilter) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch("/api/analyses");
+      const f = filter ?? approachFilter;
+      const url = f === "all" ? "/api/analyses" : `/api/analyses?approach=${f}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setAnalyses(data.data || data.analyses || []);
@@ -71,7 +79,12 @@ export default function HistoryPage() {
       console.error("Failed to fetch analyses:", e);
     }
     if (!silent) setLoading(false);
-  }, []);
+  }, [approachFilter]);
+
+  const handleFilterChange = (f: ApproachFilter) => {
+    setApproachFilter(f);
+    fetchAnalyses(false, f);
+  };
 
   // Auto-mark stuck records as error
   const cleanupStuck = useCallback(async (list: Analysis[]) => {
@@ -188,6 +201,24 @@ export default function HistoryPage() {
         </Button>
       </div>
 
+      {/* Approach filter bar */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground font-medium">Filter:</span>
+        {(["all", "1", "2"] as ApproachFilter[]).map((f) => (
+          <Button
+            key={f}
+            variant={approachFilter === f ? "default" : "outline"}
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={() => handleFilterChange(f)}
+          >
+            {f === "all"  && <><FileBox className="w-3 h-3" /> All</>}
+            {f === "1"    && <><Brain className="w-3 h-3" /> Approach 1 — AI</>}
+            {f === "2"    && <><Cpu className="w-3 h-3" /> Approach 2 — FreeCAD</>}
+          </Button>
+        ))}
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {loading ? (
@@ -217,6 +248,7 @@ export default function HistoryPage() {
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="text-muted-foreground/70">Files</TableHead>
                   <TableHead className="text-muted-foreground/70">Status</TableHead>
+                  <TableHead className="text-muted-foreground/70">Approach</TableHead>
                   <TableHead className="text-right text-muted-foreground/70">Cycle Time</TableHead>
                   <TableHead className="text-right text-muted-foreground/70">Cost</TableHead>
                   <TableHead className="text-right text-muted-foreground/70">Date</TableHead>
@@ -255,6 +287,18 @@ export default function HistoryPage() {
                             </span>
                           )}
                         </div>
+                      </TableCell>
+
+                      <TableCell>
+                        {a.approach === 1 ? (
+                          <Badge variant="outline" className="gap-1 text-[10px] border-blue-200 text-blue-700 bg-blue-50">
+                            <Brain className="w-3 h-3" /> Approach 1
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="gap-1 text-[10px] border-green-200 text-green-700 bg-green-50">
+                            <Cpu className="w-3 h-3" /> Approach 2
+                          </Badge>
+                        )}
                       </TableCell>
 
                       <TableCell className="text-right font-mono text-xs text-muted-foreground/80">

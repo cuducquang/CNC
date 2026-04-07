@@ -9,12 +9,15 @@ import { useState } from "react";
 import { UserMenu } from "@/components/auth/user-menu";
 
 const navItems = [
-  { href: "/",        label: "New Analysis", icon: LayoutDashboard },
-  { href: "/history", label: "History",      icon: History         },
+  { href: "/",                   label: "Home",                icon: LayoutDashboard },
+  { href: "/analyze?approach=1", label: "Approach 1 — AI",     icon: History         },
+  { href: "/analyze?approach=2", label: "Approach 2 — FreeCAD",icon: History         },
+  { href: "/history",            label: "History",              icon: History         },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
-  "/":        "New Analysis",
+  "/":        "Home",
+  "/analyze": "Analysis",
   "/history": "Analysis History",
 };
 

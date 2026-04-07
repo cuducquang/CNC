@@ -17,16 +17,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(data);
     }
 
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const limit    = parseInt(searchParams.get("limit")    || "20");
+    const offset   = parseInt(searchParams.get("offset")   || "0");
+    const approach = searchParams.get("approach");          // "1" | "2" | null
 
-    const { data, error, count } = await supabase
+    let query = supabase
       .from("analyses")
-      .select("id, file_name, file_3d_path, file_2d_path, status, error_message, created_at, cycle_time, cost_estimation", {
+      .select("id, file_name, file_3d_path, file_2d_path, status, error_message, created_at, cycle_time, cost_estimation, approach", {
         count: "exact",
       })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
+
+    if (approach === "1" || approach === "2") {
+      query = query.eq("approach", parseInt(approach));
+    }
+
+    const { data, error, count } = await query;
 
     if (error) throw error;
 

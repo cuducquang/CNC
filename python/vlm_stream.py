@@ -222,6 +222,33 @@ def parse_model_json(raw_text: str) -> dict:
                 return json.loads(from_brace[: close_idx + 1])
             except (json.JSONDecodeError, ValueError):
                 pass
+
+    # Final fallback: domain-aware key search.
+    # The model often wraps the JSON in prose; find the outermost object that
+    # contains one of the expected top-level keys.
+    _EXPECTED_KEYS = (
+        '"features_3d"', '"features"', '"operations"',
+        '"dimensions"', '"total_minutes"', '"shape_summary"',
+    )
+    for key in _EXPECTED_KEYS:
+        idx = cleaned.rfind(key)
+        if idx == -1:
+            continue
+        # Walk back to the { that opens the object containing this key
+        brace_pos = cleaned.rfind("{", 0, idx)
+        if brace_pos == -1:
+            continue
+        from_brace = cleaned[brace_pos:]
+        close_idx  = _find_matching_brace(from_brace)
+        if close_idx == -1:
+            continue
+        try:
+            result = json.loads(from_brace[: close_idx + 1])
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            continue
+
     return {"raw_model_output": raw_text, "dimensions": [], "gdt": [], "threads": []}
 
 
@@ -255,15 +282,24 @@ def merge_vision_results(parsed_list: list[dict]) -> dict:
     for parsed in parsed_list:
         if parsed.get("raw_model_output"):
             continue
-        for d in (parsed.get("dimensions") or []):
+        dims_raw    = parsed.get("dimensions")
+        gdt_raw     = parsed.get("gdt")
+        threads_raw = parsed.get("threads")
+        for d in (dims_raw if isinstance(dims_raw, list) else []):
+            if not isinstance(d, dict):
+                continue
             rest = {k: v for k, v in d.items() if k != "id"}
             all_dims.append({**rest, "id": f"D{str(d_count).zfill(3)}"})
             d_count += 1
-        for g in (parsed.get("gdt") or []):
+        for g in (gdt_raw if isinstance(gdt_raw, list) else []):
+            if not isinstance(g, dict):
+                continue
             rest = {k: v for k, v in g.items() if k != "id"}
             all_gdt.append({**rest, "id": f"G{str(g_count).zfill(3)}"})
             g_count += 1
-        for t in (parsed.get("threads") or []):
+        for t in (threads_raw if isinstance(threads_raw, list) else []):
+            if not isinstance(t, dict):
+                continue
             rest = {k: v for k, v in t.items() if k != "id"}
             all_threads.append({**rest, "id": f"T{str(t_count).zfill(3)}"})
             t_count += 1
