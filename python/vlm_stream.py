@@ -33,7 +33,8 @@ INACTIVITY_S = 30.0  # cancel stream if silent for this long
 SYSTEM_PROMPT = (
     "You are a metrology specialist reading a 2D engineering drawing. "
     "Extract dimensions, tolerances, GD&T callouts, and thread specifications. "
-    "Output ONLY the JSON result — nothing else. Think briefly, then output JSON immediately."
+    "Spend at most 2 sentences on any ambiguity, then decide and move on. "
+    "Output ONLY the JSON result — nothing else."
 )
 
 EXTRACTION_PROMPT = """Extract all visible dimensions, GD&T callouts, threads, and material from this 2D engineering drawing page.
@@ -44,29 +45,34 @@ NON-DRAWING PAGES — return immediately without further analysis:
 
 DRAWING PAGES — output this JSON schema:
 {
-  "dimensions": [{"id":"D001","label":"Overall length","nominal":12.5,"unit":"mm","tolerance_plus":0.02,"tolerance_minus":0.02,"quantity":1}],
-  "gdt": [{"id":"G001","symbol":"position","tolerance":0.05,"unit":"mm","datums":["A"]}],
-  "threads": [{"id":"T001","spec":"M8x1.25","depth_mm":15.0,"quantity":2}],
+  "dimensions": [{"id":"D001","label":"Overall length","nominal":12.5,"unit":"in","tolerance_plus":0.02,"tolerance_minus":0.02,"quantity":1}],
+  "gdt": [{"id":"G001","symbol":"position","tolerance":0.05,"unit":"in","datums":["A"]}],
+  "threads": [{"id":"T001","spec":".190-32 UNF-2B","depth_mm":15.0,"quantity":2}],
   "material": "AL6061-T6 or null",
   "surface_finish": "Ra 1.6 or null",
   "notes": []
 }
 
-RULES (read carefully):
-1. Extract ONLY explicitly labeled values — never infer or guess.
-2. UNCERTAIN SYMBOL OR CALLOUT → STOP thinking about it immediately. Output nothing for that symbol and move to the next item.
-2b. UNIT not labeled anywhere on the drawing → set unit to null immediately. Do NOT debate this.
-3. Omit tolerance_plus/tolerance_minus if no tolerance is shown. Zero is a valid tolerance value.
+RULES (read carefully — each decision: 1–2 sentences maximum, then move on):
+1. Extract ONLY explicitly labeled values — never infer or guess dimensions not shown.
+2. UNCERTAIN SYMBOL OR CALLOUT → output nothing for it, move to the next item immediately.
+2b. UNIT — decide in ONE pass, do not revisit:
+    • Title block or notes say INCHES / DECIMAL INCH / ASME Y14.5, or drawing uses UNF/UNC/NPT threads → unit = "in"
+    • Title block or notes say MM / METRIC, or dimensions use comma separators → unit = "mm"
+    • Truly ambiguous (no clues at all) → unit = null
+    Apply the same unit to every dimension on the page. Never debate this again.
+3. Omit tolerance_plus/tolerance_minus entirely if no tolerance callout is shown for that dimension.
 4. Bilateral ±X → tolerance_plus=X, tolerance_minus=X. Unilateral +A/−B → tolerance_plus=A, tolerance_minus=B.
-5. R prefix = RADIUS always (R2.34, 4X R4.50). Never a thread. Threads have pitch: M8x1.25, 1/4-20 UNC, TAP, THRU.
+5. R prefix = RADIUS always (R2.34, 4X R4.50). Never a thread. Threads have pitch notation: M8x1.25, .190-32 UNF-2B, 1/4-20 UNC, TAP, THRU.
 6. A dot/circle at a leader line end = arrowhead, not a GD&T diameter symbol.
-7. Parenthesized values () = reference only — same entry, not a second one.
-8. BOM table (ITEM/QTY/PART NO./DESCRIPTION) = parts list. Ignore ALL cells including part numbers.
+7. Parenthesized values () = reference only — include as a dimension entry, omit tolerance fields.
+8. BOM table (ITEM/QTY/PART NO./DESCRIPTION) = parts list. Ignore ALL cells.
 9. Assembly view with BOM and no dimension lines → empty dimensions array.
 10. Same nominal in N locations = ONE entry with quantity=N.
-11. Thread depth_mm always in mm (inches × 25.4). Omit if not shown.
+11. Thread depth_mm always in mm (inches × 25.4). Omit depth_mm if not shown.
 12. notes must be [] for drawing pages.
-13. Response MUST be ONLY the JSON object. No text before or after."""
+13. BIAS TOWARD INCLUSION: when uncertain whether to include a dimension, include it. A dimension with unit=null is better than a missing dimension.
+14. Response MUST be ONLY the JSON object. No text before or after."""
 
 
 # ---------------------------------------------------------------------------
