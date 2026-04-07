@@ -8,8 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-dev \
     poppler-utils \
+    # Fonts for PDF rendering via pdftoppm — engineering drawings use common fonts
+    # that are not embedded; without these the text renders blank → VLM sees empty frame
+    fonts-freefont-ttf \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
     curl \
     ca-certificates \
+    && fc-cache -f \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
