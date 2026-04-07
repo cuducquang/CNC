@@ -45,6 +45,7 @@ logger = logging.getLogger("cncapp.pipeline")
 
 MAX_LONG_PX = 2000  # cap longest side sent to VLM (same as pdf-to-image.ts)
 MAX_RETRIES = 1
+MAX_VLM_PAGES = 4   # Railway edge hard-kills HTTP responses after ~10 min; cap pages to stay safe
 
 
 # ---------------------------------------------------------------------------
@@ -421,8 +422,13 @@ async def run_pipeline(
         all_outcomes: list = []
 
         # Sequential: one page at a time, stream thinking + heartbeats for each
-        for i, page_b64 in enumerate(pages):
-            logger.info("Page %d/%d → VLM (b64_len=%d)", i + 1, len(pages), len(page_b64))
+        # Cap at MAX_VLM_PAGES to stay within Railway's ~10 min edge timeout
+        pages_to_process = pages[:MAX_VLM_PAGES]
+        if len(pages) > MAX_VLM_PAGES:
+            logger.info("PDF has %d pages — processing first %d only (MAX_VLM_PAGES)", len(pages), MAX_VLM_PAGES)
+
+        for i, page_b64 in enumerate(pages_to_process):
+            logger.info("Page %d/%d → VLM (b64_len=%d)", i + 1, len(pages_to_process), len(page_b64))
             thinking_queue: asyncio.Queue = asyncio.Queue()
 
             async def _on_thinking(chunk: str, _q: asyncio.Queue = thinking_queue) -> None:
@@ -445,7 +451,7 @@ async def run_pipeline(
                 except asyncio.TimeoutError:
                     yield "heartbeat", {}
 
-            logger.info("Page %d/%d done", i + 1, len(pages))
+            logger.info("Page %d/%d done", i + 1, len(pages_to_process))
             parsed, outcome = await page_task
             all_parsed.append(parsed)
             all_outcomes.append(outcome)
@@ -465,7 +471,7 @@ async def run_pipeline(
                 **merged,
                 "feature_count":    len(dims),
                 "gdt_count":        len(merged.get("gdt") or []),
-                "pages_analyzed":   len(pages),
+                "pages_analyzed":   len(pages_to_process),
             }
             extraction = step1_result
         else:
@@ -474,9 +480,9 @@ async def run_pipeline(
                 if all(o == "hard_reject" for o in all_outcomes)
                 else "No manufacturing features detected despite finding drawing pages. Ensure dimensions are visible."
                 if any_ok
-                else f"No drawing content found — all {len(pages)} page(s) appear to be cover sheets or non-technical."
+                else f"No drawing content found — all {len(pages_to_process)} page(s) appear to be cover sheets or non-technical."
             )
-            step1_result = {**merged, "error": err_msg, "feature_count": 0, "gdt_count": 0, "pages_analyzed": len(pages)}
+            step1_result = {**merged, "error": err_msg, "feature_count": 0, "gdt_count": 0, "pages_analyzed": len(pages_to_process)}
             extraction = step1_result
 
     except Exception as e:

@@ -391,8 +391,8 @@ async def collect_ollama_vision_chat(
         "stream": True,
         "temperature": 1.5,
         "repetition_penalty": 1.12,
-        "max_tokens": 16384,
-        "chat_template_kwargs": {"enable_thinking": True, "thinking_budget_tokens": 6000},
+        "max_tokens": 8192,
+        "chat_template_kwargs": {"enable_thinking": True, "thinking_budget_tokens": 3000},
         "skip_special_tokens": False,
     }
 
