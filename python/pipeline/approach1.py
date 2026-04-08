@@ -712,25 +712,30 @@ Machine: 3-axis VMC (Vertical Machining Center)
 Features:
 {json.dumps(features, indent=2)}
 
+Process vocabulary — use EXACTLY these labels (no other names):
+- Holes (through/blind, any diameter ≤50mm): label = "Drilling"
+- Threaded holes: "Drilling" (for drill op) then "Taping" (for tap op)
+- Outer profile features (body fillets/radii on edges, cylindrical bosses/pins, rectangular/circular cutouts through full depth): label = "Side Milling"
+- Pockets, internal slots, obround slots, extrusions, relief cutouts (partial depth), chamfers/fillets on pockets: label = "End Milling"
+- For larger features requiring two passes: "End Milling - Roughing" then "End Milling - Finishing"
+- Large holes (diameter >50mm): label = "Boring"
+
 Rules:
-- through_hole/blind_hole: center_drill -> drill
-- threaded_hole: center_drill -> drill -> tap
-- pocket/slot: rough_mill -> finish_mill
-- chamfer: chamfer_mill
-- fillet: ball_end_mill
-- face: face_mill
-- List operations in logical machining order (setup then features)
 - One entry per operation per feature (quantity on the feature, not repeated rows)
+- List in logical order: holes first (center work), then pockets, then profile features
+- For a threaded hole: emit "Drilling" op then "Taping" op
+- Assign a tool description appropriate to the operation and material
 
 Output ONLY this JSON:
 {{
   "operations": [
-    {{"id":"OP001","feature_id":"F001","operation":"center_drill","tool":"Center Drill Ø3.17mm","quantity":3,"note":"Pilot for M8 holes"}},
-    {{"id":"OP002","feature_id":"F001","operation":"drill","tool":"Twist Drill Ø8.86mm","quantity":3,"note":""}},
-    {{"id":"OP003","feature_id":"F001","operation":"tap","tool":"M8x1.25 Tap","quantity":3,"note":""}}
+    {{"id":"OP001","feature_id":"F001","label":"Drilling","tool":"Twist Drill Ø8.64mm","quantity":1,"note":"Blind hole"}},
+    {{"id":"OP002","feature_id":"F002","label":"End Milling - Roughing","tool":"End Mill Ø12mm 4-flute","quantity":1,"note":"Pocket rough pass"}},
+    {{"id":"OP003","feature_id":"F002","label":"End Milling - Finishing","tool":"End Mill Ø10mm 4-flute","quantity":1,"note":"Pocket finish pass"}},
+    {{"id":"OP004","feature_id":"F003","label":"Side Milling","tool":"End Mill Ø16mm 2-flute","quantity":2,"note":"Body fillet profile"}}
   ],
   "setup_count": 1,
-  "operation_count": 3
+  "operation_count": 4
 }}"""
 
     try:
@@ -787,10 +792,14 @@ async def estimate_cycle_time_llm(operations: list, material_spec: str) -> dict:
     user_prompt = f"""Estimate machining cycle time in minutes.
 
 Material: {material_spec}
-Standard assumptions:
-- Al6061: spindle 8000-12000 RPM, feed 2000-3000 mm/min for end mills; 3000-5000 RPM + 500 mm/min for drills
-- Tool change: 0.05 min each new tool
+Standard time assumptions (Al6061-T6, 3-axis VMC):
 - Setup (fixturing + zeroing): 5.0 min flat
+- Tool change: 0.05 min each new tool type
+- Drilling (per hole): 0.1–0.3 min depending on diameter and depth
+- Taping (per thread): 0.2–0.5 min
+- End Milling / End Milling - Roughing / End Milling - Finishing (per pocket/slot): 0.5–3.0 min depending on area
+- Side Milling (per profile feature): 0.3–1.5 min depending on perimeter length
+- Boring (large hole): 0.5–2.0 min
 
 Operations:
 {json.dumps(operations, indent=2)}
@@ -801,9 +810,10 @@ Output ONLY this JSON:
   "setup_minutes": 5.0,
   "machining_minutes": 6.2,
   "operations": [
-    {{"operation_id":"OP001","minutes":0.05,"note":"Center drill 3x pilot holes"}},
-    {{"operation_id":"OP002","minutes":0.15,"note":"Drill 3x Ø8.86mm through"}},
-    {{"operation_id":"OP003","minutes":0.45,"note":"Tap M8x1.25 3x at 300 RPM"}}
+    {{"operation_id":"OP001","minutes":0.15,"note":"Drill Ø8.64mm blind hole"}},
+    {{"operation_id":"OP002","minutes":1.2,"note":"End Mill pocket rough pass"}},
+    {{"operation_id":"OP003","minutes":0.8,"note":"End Mill pocket finish pass"}},
+    {{"operation_id":"OP004","minutes":0.6,"note":"Side mill body fillet profile x2"}}
   ]
 }}"""
 

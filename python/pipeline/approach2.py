@@ -677,19 +677,12 @@ async def run_pipeline(
         "material":       (extraction or {}).get("material"),
     }, "duration_ms": round((time.time() - t1) * 1000)}
 
-    if not extraction or extraction.get("error"):
-        msg = (extraction or {}).get("error") or "2D drawing extraction failed."
-        yield "error",        {"message": msg}
-        yield "final_answer", {"summary": msg, "results": build_results(extraction, None, None, None, None, None)}
-        yield "done",         {"total_minutes": 0, "total_usd": 0, "elapsed_seconds": elapsed()}
-        return
+    if not extraction:
+        extraction = {"dimensions": [], "gdt": [], "threads": [], "feature_count": 0}
 
-    if (extraction.get("feature_count") or 0) == 0:
-        msg = "No features detected in the 2D drawing. Ensure it is a clear technical drawing with visible dimensions."
-        yield "error",        {"message": msg}
-        yield "final_answer", {"summary": msg, "results": build_results(extraction, None, None, None, None, None)}
-        yield "done",         {"total_minutes": 0, "total_usd": 0, "elapsed_seconds": elapsed()}
-        return
+    # Warn on GD&T extraction failure but continue — STEP analysis runs independently
+    if extraction.get("error"):
+        yield "status", {"step": 1, "title": "GD&T Extraction", "message": f"GD&T partial: {extraction['error']} — continuing with 3D geometry."}
 
     # ── Step 2: analyze_step_file ─────────────────────────────────────────────
     yield "status",    {"step": 2, "title": "3D Analysis", "message": "Extracting geometric features from STEP file..."}
@@ -740,24 +733,47 @@ async def run_pipeline(
             )
             logger.info("Sheet metal detection: %s", sheet_metal_result)
 
+        # ── Part type classification ──────────────────────────────────────────
+        part_type_val = "cnc_machined"
+        part_type_confidence = 0.0
+        part_type_candidates: list = []
+        try:
+            from freecad_analyzer import classify_part_type, PartType
+            pt, pt_conf, pt_cands = classify_part_type(shape_summary or {}, raw_features_3d)
+            part_type_val = pt.value
+            part_type_confidence = pt_conf
+            part_type_candidates = pt_cands
+            logger.info(
+                "Part classification: %s (confidence=%.2f)  candidates=%s",
+                part_type_val, pt_conf,
+                [c["type"] for c in pt_cands[:2]],
+            )
+        except Exception as _cls_exc:
+            logger.warning("Part classification failed (defaulting to cnc_machined): %s", _cls_exc)
+
         step_analysis = {
-            "features_3d":      raw_features_3d,
-            "shape_summary":    shape_summary,
-            "sheet_metal":      sheet_metal_result,
-            "feature_count_3d": len(raw_features_3d),
-            "volume_mm3":       (shape_summary or {}).get("volume_mm3"),
-            "bbox_x_mm":        (shape_summary or {}).get("bbox_x_mm"),
-            "bbox_y_mm":        (shape_summary or {}).get("bbox_y_mm"),
-            "bbox_z_mm":        (shape_summary or {}).get("bbox_z_mm"),
+            "features_3d":           raw_features_3d,
+            "shape_summary":         shape_summary,
+            "sheet_metal":           sheet_metal_result,
+            "feature_count_3d":      len(raw_features_3d),
+            "volume_mm3":            (shape_summary or {}).get("volume_mm3"),
+            "bbox_x_mm":             (shape_summary or {}).get("bbox_x_mm"),
+            "bbox_y_mm":             (shape_summary or {}).get("bbox_y_mm"),
+            "bbox_z_mm":             (shape_summary or {}).get("bbox_z_mm"),
+            "part_type":             part_type_val,
+            "part_type_confidence":  part_type_confidence,
+            "part_type_candidates":  part_type_candidates,
         }
         yield "tool_result", {"tool": "analyze_step_file", "result": {
-            "feature_count_3d":   len(raw_features_3d),
-            "volume_mm3":         (shape_summary or {}).get("volume_mm3"),
-            "bbox_x_mm":          (shape_summary or {}).get("bbox_x_mm"),
-            "bbox_y_mm":          (shape_summary or {}).get("bbox_y_mm"),
-            "bbox_z_mm":          (shape_summary or {}).get("bbox_z_mm"),
-            "is_sheet_metal":     sheet_metal_result.get("is_sheet_metal", False),
+            "feature_count_3d":         len(raw_features_3d),
+            "volume_mm3":               (shape_summary or {}).get("volume_mm3"),
+            "bbox_x_mm":                (shape_summary or {}).get("bbox_x_mm"),
+            "bbox_y_mm":                (shape_summary or {}).get("bbox_y_mm"),
+            "bbox_z_mm":                (shape_summary or {}).get("bbox_z_mm"),
+            "is_sheet_metal":           sheet_metal_result.get("is_sheet_metal", False),
             "sheet_metal_thickness_mm": sheet_metal_result.get("thickness_mm", 0.0),
+            "part_type":                part_type_val,
+            "part_type_confidence":     part_type_confidence,
         }, "duration_ms": round((time.time() - t2) * 1000)}
 
     except Exception as e:
@@ -794,23 +810,85 @@ async def run_pipeline(
     yield "tool_call", {"tool": "map_cnc_processes", "args": {}, "iteration": 4}
     t4 = time.time()
 
+    ct_method = "from_processes"  # default, overridden inside try block
     try:
         from freecad_analyzer import map_processes as fc_map_processes, resolve_material
+        from freecad_analyzer.part_process_mapper import map_sheet_metal_processes, map_tube_processes
+        from freecad_analyzer import classify_part_type, PartType
+        from freecad_analyzer.models import FeatureDetail
+
         mat_raw = (extraction or {}).get("material") or ""
         if isinstance(mat_raw, dict):
             mat_raw = mat_raw.get("specification") or ""
         resolved_mat = resolve_material(mat_raw, default="Al6061")
 
-        if raw_features_3d:
-            proc_map_list = await loop.run_in_executor(
-                None, lambda: fc_map_processes(raw_features_3d, extraction or {}, resolved_mat)
-            )
-        else:
-            proc_map_list = []
+        detected_part_type = (step_analysis or {}).get("part_type", "cnc_machined")
 
-        processes = {"operations": proc_map_list, "operation_count": len(proc_map_list)}
+        if detected_part_type == PartType.SHEET_METAL.value and raw_features_3d:
+            # Sheet metal: use part_process_mapper
+            ss = (step_analysis or {}).get("shape_summary") or {}
+            from freecad_analyzer import classify_part_type
+            _, _, _ = classify_part_type(ss, raw_features_3d)  # already done, just reuse
+            from freecad_analyzer.models import BoundingBoxFull, ThicknessStats, FeatureType, FeatureDetail as FD
+            from freecad_analyzer import classify_part_type as _cpt
+            bbox_full = BoundingBoxFull.from_shape_summary(ss)
+            # Build FeatureDetail list (reuse adapter from classify_part_type internals)
+            from freecad_analyzer import _FTYPE_MAP
+            feat_details = []
+            for i, f in enumerate(raw_features_3d):
+                ft = _FTYPE_MAP.get((f.get("type") or "").lower(), FeatureType.UNKNOWN)
+                feat_details.append(FD(
+                    feature_id=f.get("id", f"F{i+1:03d}"),
+                    feature_type=ft,
+                    count=1,
+                    confidence=0.8,
+                    source=f.get("source", "freecad"),
+                    dimensions={},
+                ))
+            perimeter_mm = float(ss.get("bbox_x_mm", 0)) * 2 + float(ss.get("bbox_y_mm", 0)) * 2
+            proc_map_list = await loop.run_in_executor(
+                None, lambda: map_sheet_metal_processes(feat_details, bbox_full, None, perimeter_mm)
+            )
+            processes = {"processes": proc_map_list, "process_count": len(proc_map_list), "part_type": detected_part_type}
+            ct_method = "from_sheet_metal_processes"
+
+        elif detected_part_type == PartType.TUBE_PIPE.value and raw_features_3d:
+            # Tube/pipe: use part_process_mapper
+            ss = (step_analysis or {}).get("shape_summary") or {}
+            from freecad_analyzer.models import BoundingBoxFull, FeatureType, FeatureDetail as FD
+            from freecad_analyzer import _FTYPE_MAP
+            bbox_full = BoundingBoxFull.from_shape_summary(ss)
+            feat_details = []
+            for i, f in enumerate(raw_features_3d):
+                ft = _FTYPE_MAP.get((f.get("type") or "").lower(), FeatureType.UNKNOWN)
+                feat_details.append(FD(
+                    feature_id=f.get("id", f"F{i+1:03d}"),
+                    feature_type=ft,
+                    count=1,
+                    confidence=0.8,
+                    source=f.get("source", "freecad"),
+                    dimensions={},
+                ))
+            proc_map_list = await loop.run_in_executor(
+                None, lambda: map_tube_processes(feat_details, bbox_full)
+            )
+            processes = {"processes": proc_map_list, "process_count": len(proc_map_list), "part_type": detected_part_type}
+            ct_method = "from_tube_processes"
+
+        else:
+            # CNC machined (default): use existing parametric process mapper
+            if raw_features_3d:
+                proc_map_list = await loop.run_in_executor(
+                    None, lambda: fc_map_processes(raw_features_3d, extraction or {}, resolved_mat)
+                )
+            else:
+                proc_map_list = []
+            processes = {"operations": proc_map_list, "operation_count": len(proc_map_list), "part_type": detected_part_type}
+            ct_method = "from_processes"
+
         yield "tool_result", {"tool": "map_cnc_processes", "result": {
             "operation_count": len(proc_map_list),
+            "part_type":       detected_part_type,
         }, "duration_ms": round((time.time() - t4) * 1000)}
     except Exception as e:
         logger.warning("map_cnc_processes failed: %s", e)
@@ -823,8 +901,11 @@ async def run_pipeline(
     t5 = time.time()
 
     try:
-        if processes and (processes.get("operations") or []):
-            ct_args = {"method": "from_processes", "process_map_json": json.dumps(processes)}
+        # Use the process map key appropriate for the detected part type
+        _proc_key = "processes" if ct_method in ("from_sheet_metal_processes", "from_tube_processes") else "operations"
+        _has_procs = processes and (processes.get(_proc_key) or [])
+        if _has_procs:
+            ct_args = {"method": ct_method, "process_map_json": json.dumps(processes.get(_proc_key, []))}
         else:
             ct_args = {"method": "from_features", "extraction_json": json.dumps(extraction or {})}
 

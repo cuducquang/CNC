@@ -146,3 +146,109 @@ class AnalysisResponse(BaseModel):
     shape_summary:     Optional[ShapeSummary]          = None
     feature_recognition: Optional[FeatureRecognitionResult] = None
     error:             Optional[str]                   = None
+
+
+# ---------------------------------------------------------------------------
+# Part Classification Models (ported from customer's CAD_Analyser/models.py)
+# ---------------------------------------------------------------------------
+
+import enum as _enum
+
+
+class PartType(str, _enum.Enum):
+    SHEET_METAL  = "sheet_metal"
+    CNC_MACHINED = "cnc_machined"
+    TUBE_PIPE    = "tube_pipe"
+    HARDWARE     = "hardware"
+    CASTING      = "casting"
+    WELDMENT     = "weldment"
+    ADDITIVE     = "additive"
+    TURNED_LATHE = "turned_lathe"
+    UNKNOWN      = "unknown"
+
+
+class FeatureType(str, _enum.Enum):
+    THROUGH_HOLE        = "through_hole"
+    BLIND_HOLE          = "blind_hole"
+    COUNTERBORE         = "counterbore"
+    COUNTERSINK         = "countersink"
+    POCKET              = "pocket"
+    SLOT                = "slot"
+    FILLET              = "fillet"
+    CHAMFER             = "chamfer"
+    BEND                = "bend"
+    THREAD              = "thread"
+    BOSS                = "boss"
+    RIB                 = "rib"
+    DRAFT               = "draft"
+    UNDERCUT            = "undercut"
+    HEM                 = "hem"
+    JOGGLE              = "joggle"
+    BRIDGE              = "bridge"
+    EMBOSS              = "emboss"
+    COIN                = "coin"
+    BEAD                = "bead"
+    CURL                = "curl"
+    FLANGE              = "flange"
+    LANCE               = "lance"
+    PERFORATION_PATTERN = "perforation_pattern"
+    DEEP_DRAW           = "deep_draw"
+    STEP                = "step"
+    UNKNOWN             = "unknown"
+
+
+class FaceTypeCounts(BaseModel):
+    plane:    int = 0
+    cylinder: int = 0
+    cone:     int = 0
+    sphere:   int = 0
+    torus:    int = 0
+    bspline:  int = 0
+    other:    int = 0
+    total:    int = 0
+
+
+class BoundingBoxFull(BaseModel):
+    """Extended bounding box with both min/max coords and extents."""
+    x_min:  float = 0.0
+    y_min:  float = 0.0
+    z_min:  float = 0.0
+    x_max:  float = 0.0
+    y_max:  float = 0.0
+    z_max:  float = 0.0
+    length: float = Field(0.0, description="X extent (x_max - x_min)")
+    width:  float = Field(0.0, description="Y extent (y_max - y_min)")
+    height: float = Field(0.0, description="Z extent (z_max - z_min)")
+
+    @classmethod
+    def from_shape_summary(cls, ss: dict) -> "BoundingBoxFull":
+        """Build from a shape_summary dict produced by STEPAnalyzer."""
+        return cls(
+            x_min=ss.get("bbox_x_min", 0.0),
+            y_min=ss.get("bbox_y_min", 0.0),
+            z_min=ss.get("bbox_z_min", 0.0),
+            x_max=ss.get("bbox_x_max", ss.get("bbox_x_mm", 0.0)),
+            y_max=ss.get("bbox_y_max", ss.get("bbox_y_mm", 0.0)),
+            z_max=ss.get("bbox_z_max", ss.get("bbox_z_mm", 0.0)),
+            length=ss.get("bbox_x_mm", 0.0),
+            width=ss.get("bbox_y_mm", 0.0),
+            height=ss.get("bbox_z_mm", 0.0),
+        )
+
+
+class ThicknessStats(BaseModel):
+    min_mm:     float
+    max_mm:     float
+    mean_mm:    float
+    std_dev_mm: float
+    is_uniform: bool = Field(False, description="std_dev < 5% of mean")
+
+
+class FeatureDetail(BaseModel):
+    """Richer feature model used by part classifier."""
+    feature_id:   str
+    feature_type: FeatureType
+    count:        int   = 1
+    confidence:   float = Field(0.8, ge=0.0, le=1.0)
+    source:       str   = "freecad"
+    dimensions:   Dict[str, Any] = Field(default_factory=dict)

@@ -305,6 +305,12 @@ class STEPAnalyzer:
             "bbox_z_mm":  round(bb.ZLength, 4),
             "volume_mm3": round(shape.Volume, 4),
             "area_mm2":   round(shape.Area, 4),
+            "bbox_x_min": round(bb.XMin, 4),
+            "bbox_y_min": round(bb.YMin, 4),
+            "bbox_z_min": round(bb.ZMin, 4),
+            "bbox_x_max": round(bb.XMax, 4),
+            "bbox_y_max": round(bb.YMax, 4),
+            "bbox_z_max": round(bb.ZMax, 4),
         }
         logger.info(
             "Shape summary: type=%s  solids=%d  faces=%d  edges=%d  "
@@ -327,6 +333,18 @@ class STEPAnalyzer:
         for fi in face_infos:
             surf_counts[fi.surf_type] += 1
         logger.info("Surface-type breakdown: %s", dict(surf_counts))
+
+        # Normalize FreeCAD surface type names → customer vocab
+        _SURF_NORM = {
+            "Plane": "plane", "Cylinder": "cylinder", "Cone": "cone",
+            "Sphere": "sphere", "Toroid": "torus", "BSplineSurface": "bspline",
+        }
+        ftc: Dict[str, int] = {"plane": 0, "cylinder": 0, "cone": 0, "sphere": 0, "torus": 0, "bspline": 0, "other": 0}
+        for stype, cnt in surf_counts.items():
+            key = _SURF_NORM.get(stype, "other")
+            ftc[key] += cnt
+        ftc["total"] = sum(ftc.values())
+        shape_summary["face_type_counts"] = ftc
 
         # Step 2 — run detectors in order
         features = []

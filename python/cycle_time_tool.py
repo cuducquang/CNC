@@ -83,7 +83,7 @@ def estimate_cycle_time(args: dict) -> dict:
         pm = json.loads(pm_raw) if isinstance(pm_raw, str) else pm_raw
 
         # Support both Python (operations list) and legacy TS (process_map list)
-        ops: list[dict] = pm.get("operations") or pm.get("process_map") or (pm if isinstance(pm, list) else [])
+        ops: list[dict] = pm if isinstance(pm, list) else (pm.get("operations") or pm.get("process_map") or [])
         bd: list[dict] = [{"process": "Setup", "minutes": SETUP_MIN, "category": "setup"}]
         prev_tool: str | None = None
         tool_changes = 0
@@ -124,6 +124,78 @@ def estimate_cycle_time(args: dict) -> dict:
 
         total = _r2(sum(r["minutes"] for r in bd))
         return {"method": "cutting_parameter_based", "total_minutes": total, "breakdown": bd}
+
+    # ── Sheet metal process path ──────────────────────────────────────────────
+    if method == "from_sheet_metal_processes" and args.get("process_map_json"):
+        pm_raw = args["process_map_json"]
+        pm = json.loads(pm_raw) if isinstance(pm_raw, str) else pm_raw
+        procs: list[dict] = pm if isinstance(pm, list) else (pm.get("processes") or [])
+
+        bd: list[dict] = [{"process": "Material Handling / Setup", "minutes": 5.0, "category": "setup"}]
+
+        # Laser speed: default 3000 mm/min (2mm Al), scales with thickness
+        _LASER_SPEED_MMPM = 3000.0
+
+        for proc in procs:
+            ptype = proc.get("process_type", "")
+            label = proc.get("label") or ptype.replace("_", " ").title()
+            op_count = int(proc.get("operation_count") or 1)
+            cut_mm = float(proc.get("cut_length_mm") or 0.0)
+            n_bends = int(proc.get("bend_count") or 0)
+
+            if ptype in ("laser_cutting", "plasma_cutting", "waterjet_cutting", "fine_blanking"):
+                minutes = (cut_mm / _LASER_SPEED_MMPM) if cut_mm > 0 else 1.0
+                bd.append({"process": label, "minutes": _r3(minutes), "category": "machining"})
+
+            elif ptype == "punching":
+                # ~6 seconds per punch
+                minutes = op_count * 0.1
+                bd.append({"process": label, "minutes": _r2(minutes), "category": "machining"})
+
+            elif ptype == "drilling":
+                # ~30 seconds per hole (sheet metal drill)
+                minutes = op_count * 0.5
+                bd.append({"process": label, "minutes": _r2(minutes), "category": "machining"})
+
+            elif ptype == "press_brake_bending":
+                # ~45 seconds per bend (setup + execute)
+                minutes = n_bends * 0.75 if n_bends > 0 else op_count * 0.75
+                bd.append({"process": label, "minutes": _r2(minutes), "category": "machining"})
+
+            elif ptype == "deburring":
+                bd.append({"process": label, "minutes": 2.0, "category": "finishing"})
+
+            else:
+                # Generic: 1 min per operation
+                minutes = op_count * 1.0
+                bd.append({"process": label, "minutes": _r2(minutes), "category": "machining"})
+
+        total = _r2(sum(r["minutes"] for r in bd))
+        return {"method": "sheet_metal_process_based", "total_minutes": total, "breakdown": bd}
+
+    # ── Tube/pipe process path ────────────────────────────────────────────────
+    if method == "from_tube_processes" and args.get("process_map_json"):
+        pm_raw = args["process_map_json"]
+        pm = json.loads(pm_raw) if isinstance(pm_raw, str) else pm_raw
+        procs = pm if isinstance(pm, list) else (pm.get("processes") or [])
+
+        bd = [{"process": "Setup", "minutes": 5.0, "category": "setup"}]
+
+        for proc in procs:
+            ptype = proc.get("process_type", "")
+            label = proc.get("label") or ptype.replace("_", " ").title()
+            n_bends = int(proc.get("bend_count") or 0)
+
+            if ptype == "tube_laser_cutting":
+                bd.append({"process": label, "minutes": 3.0, "category": "machining"})
+            elif ptype == "tube_bending":
+                minutes = n_bends * 1.5 if n_bends > 0 else 1.5
+                bd.append({"process": label, "minutes": _r2(minutes), "category": "machining"})
+            else:
+                bd.append({"process": label, "minutes": 1.0, "category": "machining"})
+
+        total = _r2(sum(r["minutes"] for r in bd))
+        return {"method": "tube_process_based", "total_minutes": total, "breakdown": bd}
 
     # ── Heuristic path: legacy 2D extraction ─────────────────────────────────
     ext_raw = args.get("extraction_json") or {}

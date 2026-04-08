@@ -206,18 +206,51 @@ def _match_tolerance(
     )
 
 
-def _op_label(op: str, feat_id: str, dia_mm: float) -> str:
-    names = {
-        "center_drill":   "Center Drill",
-        "drilling":       "Drill",
-        "reaming":        "Ream",
-        "milling_rough":  "Rough Mill",
-        "milling_finish": "Finish Mill",
-        "chamfering":     "Chamfer",
-        "threading":      "Thread Mill",
-    }
-    name = names.get(op, op.replace("_", " ").title())
-    return f"{name} {feat_id} Ø{dia_mm:.2f}mm"
+def _customer_label(op: str, ftype: str, feat_id: str) -> str:
+    """
+    Translate internal operation + feature type to customer process vocabulary.
+
+    Vocabulary:
+      "Drilling"              — hole drilling ops (center_drill, drilling, reaming)
+      "Taping"                — thread cutting (threading)
+      "Boring"                — large hole ops (boring)
+      "End Milling - Roughing"  — rough pass on pocket / slot
+      "End Milling - Finishing" — finish pass on pocket / slot
+      "Side Milling"          — contour/profile: step, boss, fillet, chamfer (outer)
+      "End Milling"           — default milling (fillet in pocket, single-pass features)
+    """
+    f = ftype.lower()
+    o = op.lower()
+
+    # Hole-making ops
+    if o in ("center_drill", "drilling", "reaming"):
+        return "Drilling"
+
+    # Thread cutting
+    if o == "threading":
+        return "Taping"
+
+    # Boring (large holes)
+    if o == "boring":
+        return "Boring"
+
+    # Pocket / slot — two-pass
+    if f in ("pocket", "slot"):
+        if o == "milling_rough":
+            return "End Milling - Roughing"
+        if o == "milling_finish":
+            return "End Milling - Finishing"
+
+    # Outer-profile features → Side Milling
+    if f in ("step", "boss", "fillet", "chamfer"):
+        return "Side Milling"
+
+    # Countersink is a drilling/chamfering op
+    if f == "countersink":
+        return "Drilling"
+
+    # Default: End Milling
+    return "End Milling"
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +369,7 @@ def map_processes(
                 "feature_id":   feat_id,
                 "sequence":     seq,
                 "operation":    step["op"],
-                "label":        _op_label(step["op"], feat_id, tool_dia),
+                "label":        _customer_label(step["op"], ftype, feat_id),
                 "tool":         tool_def,
                 "params": {
                     "spindle_rpm":    rpm,
@@ -360,7 +393,7 @@ def map_processes(
                 "feature_id":   feat_id,
                 "sequence":     seq,
                 "operation":    "reaming",
-                "label":        f"Ream {feat_id} Ø{dia_mm:.2f}mm ({tol_class})",
+                "label":        "Drilling",
                 "tool":         ream,
                 "params": {
                     "spindle_rpm":    r_rpm,
@@ -393,7 +426,7 @@ def map_processes(
             ops.append({
                 "id": f"OP{seq:03d}", "feature_id": t_id, "sequence": seq,
                 "operation": "center_drill",
-                "label": f"Center Drill for {spec}",
+                "label": "Drilling",
                 "tool": cd,
                 "params": {"spindle_rpm": cd_rpm, "feed_rate_mmpm": cd_feed, "depth_mm": 3.0},
                 "toolpath_distance_mm": 3.0,
@@ -410,7 +443,7 @@ def map_processes(
             ops.append({
                 "id": f"OP{seq:03d}", "feature_id": t_id, "sequence": seq,
                 "operation": "drilling",
-                "label": f"Tap Drill Ø{drill_dia:.2f}mm for {spec}",
+                "label": "Drilling",
                 "tool": td,
                 "params": {"spindle_rpm": td_rpm, "feed_rate_mmpm": td_feed, "depth_mm": round(td_dist, 2)},
                 "toolpath_distance_mm": round(td_dist, 3),
@@ -426,7 +459,7 @@ def map_processes(
             ops.append({
                 "id": f"OP{seq:03d}", "feature_id": t_id, "sequence": seq,
                 "operation": "threading",
-                "label": f"Thread Mill {spec} depth={depth_mm:.1f}mm",
+                "label": "Taping",
                 "tool": tm,
                 "params": {
                     "spindle_rpm": tm_rpm, "feed_rate_mmpm": tm_feed,
