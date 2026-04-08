@@ -431,10 +431,13 @@ async def collect_ollama_vision_chat(
             },
         ],
         "stream": True,
-        "temperature": 1.5,
+        # temperature=0.15: breaks repetition loops while keeping JSON structure stable.
+        # (temperature=0 causes deterministic repetition on ambiguous GD&T symbols;
+        #  temperature=1.5 was previously set here but produces garbled JSON answers.)
+        "temperature": 0.15,
         "repetition_penalty": 1.12,
-        "max_tokens": 8192,
-        "chat_template_kwargs": {"enable_thinking": True, "thinking_budget_tokens": 3000},
+        "max_tokens": 12288,
+        "chat_template_kwargs": {"enable_thinking": True, "thinking_budget_tokens": 6000},
         "skip_special_tokens": False,
     }
 
