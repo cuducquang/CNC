@@ -178,7 +178,7 @@ function UploadView({
         </h1>
         <p className="text-[13.5px] text-muted-foreground max-w-md mx-auto leading-relaxed">
           {isApproach1
-            ? "Each pipeline step runs as a separate LLM call to server_llm.py. No single long-running connection — no CDN timeout."
+            ? "Each pipeline step runs as a separate LLM call. No single long-running connection — no CDN timeout."
             : "FreeCAD parses 3D geometry deterministically. The AI agent orchestrates all 6 steps in a single streaming session."}
         </p>
       </div>

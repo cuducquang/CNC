@@ -3,7 +3,7 @@
 /**
  * Approach 1 — LLM-per-step pipeline test page.
  *
- * Calls Python server_llm.py (port 8001) directly from the browser.
+ * Calls Python server.py (port 8001) directly from the browser.
  * CORS is open on the Python side so no Next.js proxy is needed.
  *
  * Set NEXT_PUBLIC_PYTHON_V1_URL to override the default http://localhost:8001.
@@ -405,7 +405,7 @@ export default function V1TestPage() {
           <h1 className="text-3xl font-bold tracking-tight">LLM Pipeline Test</h1>
           <p className="text-[13.5px] text-muted-foreground max-w-lg mx-auto leading-relaxed">
             Each pipeline step runs as a separate HTTP call to{" "}
-            <code className="text-[12px] font-mono bg-muted px-1 rounded">server_llm.py :8001</code>.
+            <code className="text-[12px] font-mono bg-muted px-1 rounded">server.py :8001</code>.
             No single long-running connection — no CDN timeout.
           </p>
         </div>
