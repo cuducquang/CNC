@@ -187,47 +187,6 @@ Files are uploaded by the browser directly to Supabase Storage using the anon ke
 
 ---
 
-### 1.6 Local Development
-
-```
-CNCapp/
-├── src/                        Next.js app
-│   ├── app/                    Pages + API routes
-│   ├── components/             React components (UI, results, agent)
-│   └── lib/
-│       ├── api.ts              All fetch wrappers (Python service calls)
-│       ├── hooks/
-│       │   ├── useApproach1.ts Approach 1 state machine
-│       │   └── useApproach2.ts Approach 2 state machine
-│       └── supabase*.ts        Supabase client factories
-├── python/
-│   ├── server.py               Unified FastAPI server (port 8001)
-│   ├── vlm_stream.py           VLM streaming + JSON extraction
-│   ├── pipeline/
-│   │   ├── __init__.py         Unified exports for both approaches
-│   │   ├── approach1.py        LLM-per-step functions
-│   │   ├── approach2.py        FreeCAD deterministic pipeline
-│   │   └── shared.py           _call_text_llm, _download helpers
-│   ├── freecad_analyzer/       FreeCAD wrappers
-│   │   ├── step_analyzer.py    STEPAnalyzer class
-│   │   ├── process_mapper.py   Deterministic CNC process mapper
-│   │   └── models.py           Pydantic output models
-│   ├── cycle_time_tool.py      Deterministic cycle time formula
-│   ├── cost_tool.py            Deterministic cost formula
-│   └── requirements.txt
-├── Dockerfile.python           Production image (Railway)
-├── docker-compose.yml          Local dev (single service: port 8001)
-└── .env.local                  Secrets (not committed)
-```
-
-**Start everything locally:**
-
-```bash
-docker compose --env-file .env.local up --build
-# Frontend: http://localhost:3000
-# Python:   http://localhost:8001
-```
-
 ---
 
 ## 2. Features and API Reference
@@ -538,6 +497,8 @@ All six steps run inside a single SSE streaming response (`POST /analyze-stream`
 
 **Source of truth:** The 2D engineering drawing as rendered. Values are what is explicitly labeled — the model is instructed never to infer or guess unlabeled dimensions.
 
+**Resilience against VLM failure:** If the RunPod endpoint drops the connection mid-stream (e.g. `peer closed connection` on a multi-page PDF), the pipeline substitutes an empty extraction — `{"dimensions":[], "gdt":[], "threads":[], "feature_count":0}` — emits a `status` warning event, and continues to Step 2. FreeCAD STEP analysis is entirely independent of the drawing extraction and always runs regardless. The cost of a missing GD&T extraction is that tolerance classes default to `"general"` and material defaults to `AL6061-T6`; geometry, features, operations, and cycle time are still produced from the 3D solid.
+
 ---
 
 ### Step 2 — 3D Geometry Analysis (`analyze_step_file`)
@@ -594,6 +555,63 @@ All six steps run inside a single SSE streaming response (`POST /analyze-stream`
 ```
 
 **Source of truth:** FreeCAD's OpenCASCADE geometry kernel reads the STEP B-rep (Boundary Representation) directly. Hole diameters are derived from the cylindrical face radius, which is the exact designed dimension — no measurement uncertainty. This is the most reliable step in the pipeline.
+
+---
+
+**Part type classification (`part_classifier.py`):**
+
+After STEPAnalyzer completes, a geometry heuristic scorer (`classify_part`) classifies the part into one of 8 manufacturing types: `sheet_metal`, `cnc_machined`, `tube_pipe`, `hardware`, `casting`, `weldment`, `additive`, `turned_lathe`. Each type receives a raw score, all scores are normalised to sum to 1.0, and the highest-scoring type wins (minimum threshold 0.15 to avoid spurious classifications).
+
+The scorer derives five primary geometry ratios from the bounding box and volume:
+
+```
+bbox_vol   = length × width × height
+vol_ratio  = volume / bbox_vol        # fill factor: 1.0 = solid block, <0.2 = thin shell / hollow
+flatness   = min_dim / max_dim        # 1.0 = cube, 0.03 = very flat plate
+aspect_ratio = max_dim / min_dim      # inverse of flatness
+plane_frac = plane_faces / total_faces
+cyl_frac   = cylinder_faces / total_faces
+```
+
+**Key discriminating rules by part type:**
+
+| Type | Primary signal | Score drivers |
+|---|---|---|
+| `sheet_metal` | `flatness < 0.1` (+3.0), `vol_ratio < 0.15` (+2.5) | uniform thickness (+2.5), bend features (+2.0 each), thin mean thickness (+2.0) |
+| `cnc_machined` | `0.3 < vol_ratio < 0.85` (+2.0) | holes + pockets + slots > 3 (+2.5), pocket present (+1.5), high plane_frac (+0.5) |
+| `tube_pipe` | `cyl_frac > 0.4` (+2.5) | aspect_ratio > 3 (+1.5), uniform thickness (+1.0) |
+| `hardware` | `max_dim < 50 mm` (+2.0) | thread features (+3.0), high cyl_frac (+1.0) |
+| `turned_lathe` | `cyl_frac > 0.5` (+3.0) | approx_circular (cyl+cone+torus) > 0.6 (+2.0) |
+| `casting` | `bspline_frac > 0.2` (+2.5) | draft angles (+2.0), fillets > 3 (+1.5) |
+
+**Sheet metal vs CNC flat plate disambiguation:**
+
+The hardest classification boundary is a large flat CNC-machined aluminum plate vs. true sheet metal — both can have `flatness < 0.1` and `vol_ratio < 0.15` (deep pockets hollow out the fill ratio). The discriminating physical fact is thickness: real sheet metal is 0.5–12 mm thick, while a CNC plate is typically 12–50 mm thick. The classifier applies minimum-dimension penalties to the `sheet_metal` score:
+
+```python
+if min_dim > 12:   score -= 3.5   # too thick to be sheet metal
+elif min_dim > 6:  score -= 1.5   # borderline — mild penalty
+if pocket_count > 0: score -= 2.0  # pockets are machined, not formed
+```
+
+And adds a reciprocal bonus to `cnc_machined` for flat-but-thick parts:
+
+```python
+if min_dim > 12 and flatness < 0.15:
+    score += 2.0   # flat plate ≥ 12mm → CNC machined
+```
+
+The `vol_ratio` penalty for `cnc_machined` is also relaxed when pockets or holes are present, because a deeply pocketed plate legitimately has a low fill ratio despite being CNC work:
+
+```python
+elif vol_ratio < 0.15:
+    if pocket_count > 0 or hole_count > 0:
+        score += 0.5   # low fill is expected for pocketed plates
+    else:
+        score -= 2.0   # genuinely low density → not CNC
+```
+
+If no type scores above 0.15 after normalisation, the part is labelled `unknown` and the pipeline falls back to conservative process assumptions.
 
 ---
 
@@ -720,6 +738,18 @@ Constants:
 - `TOOL_CHANGE_MIN = 0.5` — ATC on a standard VMC
 - `RAPID_MMPM = 5080` — 200 in/min rapid traverse
 - `APPROACH_MM = 6.35` — 0.25 in clearance plane
+
+**Process map input format:** The cycle time estimator (`estimate_cycle_time`) accepts the process map in two shapes:
+- **Approach 2** passes a raw Python `list` of operation dicts directly from the FreeCAD `ProcessMapper`.
+- **Approach 1 (legacy TypeScript maps)** passes a dict with an `"operations"` or `"process_map"` key, or inch-unit `feed_rate_ipm` / `toolpath_distance_in` fields that are converted to mm internally.
+
+The resolver handles both without the caller specifying a flag:
+
+```python
+ops = pm if isinstance(pm, list) else (pm.get("operations") or pm.get("process_map") or [])
+```
+
+Inch feeds and distances are up-converted: `feed_mmpm = feed_ipm × 25.4`, `dist_mm = dist_in × 25.4`, so the same formula works for both unit systems. If both `toolpath_distance_mm` and `feed_rate_mmpm` are missing or zero, the operation falls back to 0.5 min (a conservative floor for short facing passes).
 
 **Sample output** (from real 0041 STEP file, Approach 2):
 ```
@@ -942,118 +972,5 @@ total_usd = raw_material ($15) + (total_minutes / 60) × shop_rate ($60/hr)
 | **Best for** | Complex drawings, uncommon materials | Standard machined parts, batch pricing |
 
 ---
-
----
-
-## 4. Engineering Changes & Test Results (2026-04-08)
-
-### 4.1 Bug Fixes
-
-#### Fix 1 — Part Classifier: CNC Plate Misclassified as Sheet Metal
-
-**File:** `python/freecad_analyzer/part_classifier.py`
-
-**Root cause:** The sheet-metal scorer awarded +3.0 for `flatness < 0.1` and +2.5 for `vol_ratio < 0.15`. A large CNC-machined aluminum plate (e.g. 466×932×31.75 mm) satisfies both conditions — `flatness = 31.75/932 = 0.034` and deep pockets yield a very low fill ratio — causing sheet-metal to outscore CNC_MACHINED.
-
-**Fix:** Added minimum-dimension and pocket-presence penalties to the sheet-metal scoring block:
-
-```python
-# Sheet metal is thin — min_dim > 12mm means CNC plate, not sheet metal
-if min_dim > 12:
-    score -= 3.5
-elif min_dim > 6:
-    score -= 1.5
-# Pockets indicate CNC machining, not sheet metal forming
-if pocket_count > 0:
-    score -= 2.0
-```
-
-Also added a bonus to `CNC_MACHINED` for flat plates thicker than 12 mm:
-
-```python
-# Flat plates > 12mm thick are CNC machined, not sheet metal
-if min_dim > 12 and flatness < 0.15:
-    score += 2.0
-```
-
-And corrected the low `vol_ratio` penalty for CNC_MACHINED to allow flat plates with pockets/holes:
-
-```python
-elif vol_ratio < 0.15:
-    # Low vol_ratio is OK for flat machined plates with pockets/holes
-    if pocket_count > 0 or hole_count > 0:
-        score += 0.5
-    else:
-        score -= 2.0
-```
-
-**Discriminating rule:** Real sheet metal is 0.5–12 mm thick. Any part with `min_dim > 12 mm` is a CNC plate regardless of flatness.
-
----
-
-#### Fix 2 — Cycle Time: `AttributeError` on List Process Maps
-
-**File:** `python/cycle_time_tool.py`
-
-**Root cause:** The `from_processes` path decoded the raw process map and then called `pm.get("operations")`. Approach 2 passes a raw Python `list` (from the FreeCAD process mapper), not a dict. Python evaluates `pm.get(...)` before reaching the `isinstance` check, raising `AttributeError: 'list' object has no attribute 'get'`.
-
-**Fix:** Reordered the type check to test for `list` first:
-
-```python
-# Before (broke on list):
-ops = pm.get("operations") or pm.get("process_map") or (pm if isinstance(pm, list) else [])
-
-# After (correct):
-ops = pm if isinstance(pm, list) else (pm.get("operations") or pm.get("process_map") or [])
-```
-
----
-
-#### Fix 3 — Approach 2 Pipeline: Early Abort on GD&T Failure
-
-**File:** `python/pipeline/approach2.py`
-
-**Root cause:** When the RunPod VLM endpoint dropped the connection mid-stream (intermittent `peer closed connection` errors), the GD&T extraction returned 0 features with an error dict. The pipeline had a guard that immediately emitted `error` + `done` events and returned without ever running FreeCAD STEP analysis.
-
-**Fix:** Removed the early-exit guard. The pipeline now treats GD&T failure as a partial result and continues to FreeCAD analysis:
-
-```python
-# Old behaviour — hard abort if GD&T returned 0 features:
-if (extraction.get("feature_count") or 0) == 0:
-    yield "error", {"message": "No features detected in the 2D drawing..."}
-    return
-
-# New behaviour — graceful degradation:
-if not extraction:
-    extraction = {"dimensions": [], "gdt": [], "threads": [], "feature_count": 0}
-if extraction.get("error"):
-    yield "status", {"step": 1, "title": "GD&T Extraction",
-                     "message": f"GD&T partial: {extraction['error']} — continuing with 3D geometry."}
-# pipeline continues to STEP analysis regardless
-```
-
-FreeCAD STEP analysis is fully deterministic and independent of the VLM — it always runs even if the drawing extraction failed.
-
----
-
-### 4.2 Test Results (2026-04-08)
-
-Test files: `0041-28291` (466×932×31.75 mm Al6061 plate, 4-page drawing) and `0022-26609` (21.7×14.0×15.4 mm PEEK part, 2-page drawing).
-
-Expected operation vocabulary: **Side Milling**, **End Milling**, **End Milling - Roughing/Finishing**, **Drilling**, **Taping**.
-
-| File | Approach | Cycle Time | Cost (USD) | Operation Labels | Vocab Correct? |
-|---|---|---|---|---|---|
-| 0041 | Approach 1 — AI | 11.2 min | $26.20 | 24× "End Milling" | ✗ — all same label |
-| 0041 | Approach 2 — FreeCAD | 28.64 min | $48.02 | Side Milling, Drilling, End Milling Roughing/Finishing | ✓ |
-| 0022 | Approach 1 — AI | 11.2 min | $26.20 | Drilling (1×), Taping (1×), Side Milling (3×), End Milling (2×) | ✓ |
-| 0022 | Approach 2 — FreeCAD | 13.7 min | $30.73 | Drilling, Side Milling, End Milling Roughing/Finishing, Taping | ✓ |
-
-**Observations:**
-
-- Approach 2 produces correct operation vocabulary and physically grounded cycle times on both parts. The 0041 estimate (28.64 min) reflects the 24 holes + 2 large pockets; 0022 (13.7 min) reflects a small 6-feature PEEK component.
-- Approach 1 handles 0022 correctly — the small, well-defined part with a clear 2D drawing lets the LLM correctly map Drilling, Taping, Side Milling, and End Milling.
-- Approach 1 fails on 0041 — the LLM process mapper outputs "End Milling" for all 24 operations. Root cause: the feature recogniser returns mostly chamfer/fillet features (F019–F028) rather than labelled through-holes and pockets, so the mapper has no drilling or tapping signals to act on. This is a known LLM quality issue; no code bug.
-- The fix to `part_classifier.py` resolved the 0041 mis-classification as `sheet_metal` (was scoring 42% sheet metal vs 18% CNC before the fix).
 
 *End of technical report.*
