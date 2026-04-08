@@ -1,6 +1,7 @@
 services:
 
-  # ── Approach 2 Python service: FreeCAD deterministic pipeline ───────────────
+  # ── Unified Python service: both Approach 1 (LLM) + Approach 2 (FreeCAD) ───
+  # server.py handles all endpoints on port 8001.
   python-service:
     build:
       context: .
@@ -9,7 +10,7 @@ services:
     ports:
       - "8001:8001"
     env_file:
-      - .env.local          # VISION_MODEL_URL, VISION_MODEL_NAME, etc.
+      - .env.local
     environment:
       HOST: 0.0.0.0
       PORT: 8001
@@ -22,27 +23,6 @@ services:
       retries: 5
       start_period: 60s    # FreeCAD init is slow
 
-  # ── Approach 1 Python service: LLM-per-step pipeline (no FreeCAD) ───────────
-  python-llm:
-    build:
-      context: .
-      dockerfile: Dockerfile.python-llm
-    container_name: cncapp-python-llm
-    ports:
-      - "8002:8002"
-    env_file:
-      - .env.local
-    environment:
-      HOST: 0.0.0.0
-      PORT: 8002
-      PYTHONPATH: /app/python
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8002/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
   # ── Next.js frontend (port 3000) ────────────────────────────────────────────
   cncapp:
     build:
@@ -50,28 +30,24 @@ services:
       dockerfile: Dockerfile.web
       args:
         # NEXT_PUBLIC_* are baked into the JS bundle at build time.
-        # Supabase — required, must be in .env.local
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-        # Python service URLs — browser calls these directly (ports exposed to host).
+        # Both approaches served from the same Python service on port 8001.
         NEXT_PUBLIC_PYTHON_SERVICE_URL: ${NEXT_PUBLIC_PYTHON_SERVICE_URL:-http://localhost:8001}
-        NEXT_PUBLIC_PYTHON_V1_URL: ${NEXT_PUBLIC_PYTHON_V1_URL:-http://localhost:8002}
+        NEXT_PUBLIC_PYTHON_V1_URL: ${NEXT_PUBLIC_PYTHON_V1_URL:-http://localhost:8001}
     ports:
       - "3000:3000"
     depends_on:
       python-service:
         condition: service_healthy
-      python-llm:
-        condition: service_healthy
-    # host.docker.internal -> host machine IP (needed on Linux Docker Engine; no-op on Docker Desktop)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
-      - .env.local          # server-side runtime vars (API keys, model URLs, etc.)
+      - .env.local
     environment:
       # Server-side (SSR / API routes) — use Docker internal DNS, not localhost
       PYTHON_SERVICE_URL: http://python-service:8001
-      PYTHON_LLM_URL: http://python-llm:8002
+      PYTHON_LLM_URL: http://python-service:8001
       # Pipeline caps
       PDF_MAX_PAGES_FOR_VISION: "4"
       VISION_PAGE_CONCURRENCY: "1"
